@@ -1,0 +1,5 @@
+Flask
+opencv-python-headless
+numpy
+tensorflow
+psycopg2-binary
