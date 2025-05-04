@@ -4,9 +4,9 @@ import cv2
 import numpy as np
 import base64
 import uuid
-import psycopg2
-from psycopg2.extras import DictCursor
+import sqlite3
 from datetime import datetime, date
+import psycopg2
 import tensorflow as tf
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
@@ -15,122 +15,70 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from urllib.parse import urlparse
 
 app = Flask(__name__)
+database_url = os.environ.get('DATABASE_URL', 'sqlite:///attendance_system.db')
 
-# Database connection setup
-def get_db_connection():
-    database_url = os.environ.get('DATABASE_URL', 'sqlite:///attendance_system.db')
-    
-    if database_url.startswith('postgres:'):
-        # Handle Heroku's older postgres:// URLs (they now use postgresql://)
-        if database_url.startswith('postgres://'):
-            database_url = database_url.replace('postgres://', 'postgresql://', 1)
-        
-        url = urlparse(database_url)
-        conn = psycopg2.connect(
-            user=url.username,
-            password=url.password,
-            host=url.hostname,
-            port=url.port,
-            database=url.path[1:],
-        )
-        conn.autocommit = True
-        return conn
-    else:
-        # For local development, fall back to SQLite
-        import sqlite3
-        conn = sqlite3.connect('attendance_system.db')
-        conn.row_factory = sqlite3.Row
-        return conn
+# If using Postgres
+if database_url.startswith('postgres:'):
+    url = urlparse(database_url)
+    DB_CONFIG = {
+        'user': url.username,
+        'password': url.password,
+        'host': url.hostname,
+        'port': url.port,
+        'database': url.path[1:],
+    }
+    # Use psycopg2 for connections
+else:
+    # Use SQLite locally
+    DB_PATH = 'attendance_system.db'
 
-# Initialize database
 def init_db():
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
-    # Check if we're using PostgreSQL
-    if isinstance(conn, psycopg2.extensions.connection):
-        # PostgreSQL schema
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS students (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            student_id TEXT NOT NULL,
-            class TEXT NOT NULL,
-            added_date TEXT NOT NULL
-        )
-        ''')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS face_samples (
-            id SERIAL PRIMARY KEY,
-            student_id TEXT NOT NULL REFERENCES students(id),
-            image_path TEXT NOT NULL
-        )
-        ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS students (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        class TEXT NOT NULL,
+        added_date TEXT NOT NULL
+    )
+    ''')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS attendance (
-            id SERIAL PRIMARY KEY,
-            student_id TEXT NOT NULL REFERENCES students(id),
-            class TEXT NOT NULL,
-            check_in_time TEXT NOT NULL,
-            date TEXT NOT NULL
-        )
-        ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS face_samples (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id TEXT NOT NULL,
+        image_path TEXT NOT NULL,
+        FOREIGN KEY (student_id) REFERENCES students (id)
+    )
+    ''')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS classes (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            schedule TEXT,
-            teacher TEXT
-        )
-        ''')
-    else:
-        # SQLite schema
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS students (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            student_id TEXT NOT NULL,
-            class TEXT NOT NULL,
-            added_date TEXT NOT NULL
-        )
-        ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS attendance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id TEXT NOT NULL,
+        class TEXT NOT NULL,
+        check_in_time TEXT NOT NULL,
+        date TEXT NOT NULL,
+        FOREIGN KEY (student_id) REFERENCES students (id)
+    )
+    ''')
 
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS face_samples (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            student_id TEXT NOT NULL,
-            image_path TEXT NOT NULL,
-            FOREIGN KEY (student_id) REFERENCES students (id)
-        )
-        ''')
-
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS attendance (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            student_id TEXT NOT NULL,
-            class TEXT NOT NULL,
-            check_in_time TEXT NOT NULL,
-            date TEXT NOT NULL,
-            FOREIGN KEY (student_id) REFERENCES students (id)
-        )
-        ''')
-
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS classes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            schedule TEXT,
-            teacher TEXT
-        )
-        ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS classes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        schedule TEXT,
+        teacher TEXT
+    )
+    ''')
 
     conn.commit()
     conn.close()
 
-# Call init_db to setup tables
+# Initialize database
 init_db()
 
 # Ensure directories exist
@@ -139,17 +87,6 @@ UPLOAD_FOLDER = os.path.join(BASE_DIR, 'static', 'faces')
 MODEL_PATH = os.path.join(BASE_DIR, 'static', 'model')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(MODEL_PATH, exist_ok=True)
-
-# For Heroku, we'll store image paths relative to BASE_DIR
-def get_relative_path(absolute_path):
-    if absolute_path and BASE_DIR in absolute_path:
-        return os.path.relpath(absolute_path, BASE_DIR)
-    return absolute_path
-
-def get_absolute_path(relative_path):
-    if relative_path:
-        return os.path.join(BASE_DIR, relative_path)
-    return relative_path
 
 class FacialRecognitionSystem:
     def __init__(self):
@@ -164,16 +101,10 @@ class FacialRecognitionSystem:
             self.model = self._create_model()
 
     def _create_model(self):
-        conn = get_db_connection()
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        
-        if isinstance(conn, psycopg2.extensions.connection):
-            cursor.execute("SELECT COUNT(*) FROM students")
-            num_students = max(1, cursor.fetchone()[0])
-        else:
-            cursor.execute("SELECT COUNT(*) FROM students")
-            num_students = max(1, cursor.fetchone()[0])
-            
+        cursor.execute("SELECT COUNT(*) FROM students")
+        num_students = max(1, cursor.fetchone()[0])
         conn.close()
 
         model = Sequential([
@@ -227,79 +158,44 @@ class FacialRecognitionSystem:
         filename = f"{uuid.uuid4()}.jpg"
         filepath = os.path.join(UPLOAD_FOLDER, filename)
         cv2.imwrite(filepath, face_img_resized)
-        
-        # Store relative path for database
-        relative_filepath = get_relative_path(filepath)
 
-        conn = get_db_connection()
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        
-        if isinstance(conn, psycopg2.extensions.connection):
-            cursor.execute(
-                "INSERT INTO face_samples (student_id, image_path) VALUES (%s, %s)",
-                (student_id, relative_filepath)
-            )
-        else:
-            cursor.execute(
-                "INSERT INTO face_samples (student_id, image_path) VALUES (?, ?)",
-                (student_id, relative_filepath)
-            )
-            
+        cursor.execute(
+            "INSERT INTO face_samples (student_id, image_path) VALUES (?, ?)",
+            (student_id, filepath)
+        )
         conn.commit()
         conn.close()
 
         return filepath, None
 
     def retrain_model(self):
-        conn = get_db_connection()
-        
-        if isinstance(conn, psycopg2.extensions.connection):
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM students")
-            num_students = max(1, cursor.fetchone()[0])
-            
-            if self.model.layers[-1].units != num_students:
-                print(f"Recreating model for {num_students} students")
-                self.model = self._create_model()
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
 
-            X_train = []
-            y_train = []
+        cursor.execute("SELECT COUNT(*) FROM students")
+        num_students = max(1, cursor.fetchone()[0])
 
-            cursor.execute("SELECT id, row_number() OVER (ORDER BY id) - 1 AS label FROM students")
-            student_labels = {row[0]: row[1] for row in cursor.fetchall()}
+        if self.model.layers[-1].units != num_students:
+            print(f"Recreating model for {num_students} students")
+            self.model = self._create_model()
 
-            cursor.execute("""
-                SELECT fs.student_id, fs.image_path
-                FROM face_samples fs
-                JOIN students s ON fs.student_id = s.id
-            """)
-        else:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM students")
-            num_students = max(1, cursor.fetchone()[0])
-            
-            if self.model.layers[-1].units != num_students:
-                print(f"Recreating model for {num_students} students")
-                self.model = self._create_model()
+        X_train = []
+        y_train = []
 
-            X_train = []
-            y_train = []
+        cursor.execute("SELECT id, rowid-1 AS label FROM students")
+        student_labels = {row[0]: row[1] for row in cursor.fetchall()}
 
-            cursor.execute("SELECT id, rowid-1 AS label FROM students")
-            student_labels = {row[0]: row[1] for row in cursor.fetchall()}
+        cursor.execute("""
+            SELECT fs.student_id, fs.image_path
+            FROM face_samples fs
+            JOIN students s ON fs.student_id = s.id
+        """)
 
-            cursor.execute("""
-                SELECT fs.student_id, fs.image_path
-                FROM face_samples fs
-                JOIN students s ON fs.student_id = s.id
-            """)
-
-        for row in cursor.fetchall():
-            student_id, image_path = row
-            abs_image_path = get_absolute_path(image_path)
-            
-            if os.path.exists(abs_image_path):
-                img = cv2.imread(abs_image_path)
+        for student_id, image_path in cursor.fetchall():
+            if os.path.exists(image_path):
+                img = cv2.imread(image_path)
                 if img is not None:
                     img = cv2.resize(img, (100, 100)) / 255.0
                     X_train.append(img)
@@ -345,48 +241,26 @@ class FacialRecognitionSystem:
         face_img = self.preprocess_face(image, largest_face)
         face_img = np.expand_dims(face_img, axis=0)
 
-        conn = get_db_connection()
-        
-        if isinstance(conn, psycopg2.extensions.connection):
-            cursor = conn.cursor(cursor_factory=DictCursor)
-            
-            cursor.execute("SELECT COUNT(*) FROM students")
-            num_students = cursor.fetchone()[0]
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
 
-            if num_students == 0:
-                conn.close()
-                return None, "No students in database"
+        cursor.execute("SELECT COUNT(*) FROM students")
+        num_students = cursor.fetchone()[0]
 
-            predictions = self.model.predict(face_img, verbose=0)
-            student_label = np.argmax(predictions[0])
-            confidence = float(np.max(predictions[0]) * 100)
+        if num_students == 0:
+            conn.close()
+            return None, "No students in database"
 
-            cursor.execute("""
-                SELECT s.id, s.name, s.student_id, s.class,
-                       (SELECT image_path FROM face_samples WHERE student_id = s.id LIMIT 1) as image
-                FROM students s
-                WHERE row_number() OVER (ORDER BY id) - 1 = %s
-            """, (student_label,))
-        else:
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT COUNT(*) FROM students")
-            num_students = cursor.fetchone()[0]
+        predictions = self.model.predict(face_img, verbose=0)
+        student_label = np.argmax(predictions[0])
+        confidence = float(np.max(predictions[0]) * 100)
 
-            if num_students == 0:
-                conn.close()
-                return None, "No students in database"
-
-            predictions = self.model.predict(face_img, verbose=0)
-            student_label = np.argmax(predictions[0])
-            confidence = float(np.max(predictions[0]) * 100)
-
-            cursor.execute("""
-                SELECT s.id, s.name, s.student_id, s.class,
-                       (SELECT image_path FROM face_samples WHERE student_id = s.id LIMIT 1) as image
-                FROM students s
-                WHERE rowid-1 = ?
-            """, (student_label,))
+        cursor.execute("""
+            SELECT s.id, s.name, s.student_id, s.class,
+                   (SELECT image_path FROM face_samples WHERE student_id = s.id LIMIT 1) as image
+            FROM students s
+            WHERE rowid-1 = ?
+        """, (student_label,))
 
         student = cursor.fetchone()
         
@@ -403,61 +277,34 @@ class FacialRecognitionSystem:
         now = datetime.now().strftime("%H:%M:%S")
         
         # Check if attendance already recorded today
-        if isinstance(conn, psycopg2.extensions.connection):
-            cursor.execute("""
-                SELECT id FROM attendance 
-                WHERE student_id = %s AND date = %s AND class = %s
-            """, (student['id'], today, student['class'] if class_id is None else class_id))
-            
-            if cursor.fetchone() is None:
-                # Record new attendance
-                cursor.execute("""
-                    INSERT INTO attendance (student_id, check_in_time, date, class)
-                    VALUES (%s, %s, %s, %s)
-                """, (student['id'], now, today, student['class'] if class_id is None else class_id))
-                attendance_recorded = True
-            else:
-                attendance_recorded = False
-        else:
-            cursor.execute("""
-                SELECT id FROM attendance 
-                WHERE student_id = ? AND date = ? AND class = ?
-            """, (student['id'], today, student['class'] if class_id is None else class_id))
-            
-            if cursor.fetchone() is None:
-                # Record new attendance
-                cursor.execute("""
-                    INSERT INTO attendance (student_id, check_in_time, date, class)
-                    VALUES (?, ?, ?, ?)
-                """, (student['id'], now, today, student['class'] if class_id is None else class_id))
-                attendance_recorded = True
-            else:
-                attendance_recorded = False
-                
-        conn.commit()
+        cursor.execute("""
+            SELECT id FROM attendance 
+            WHERE student_id = ? AND date = ? AND class = ?
+        """, (student[0], today, student[3] if class_id is None else class_id))
         
-        # Convert to dict for JSON serialization
-        if isinstance(conn, psycopg2.extensions.connection):
-            student_dict = dict(student)
+        if cursor.fetchone() is None:
+            # Record new attendance
+            cursor.execute("""
+                INSERT INTO attendance (student_id, check_in_time, date, class)
+                VALUES (?, ?, ?, ?)
+            """, (student[0], now, today, student[3] if class_id is None else class_id))
+            attendance_recorded = True
         else:
-            student_dict = {
-                "id": student[0],
-                "name": student[1],
-                "student_id": student[2],
-                "class": student[3],
-                "image": student[4]
-            }
+            attendance_recorded = False
             
-        # Convert relative path to absolute for frontend
-        if student_dict["image"]:
-            student_dict["image"] = get_absolute_path(student_dict["image"])
-            
+        conn.commit()
         conn.close()
 
         return {
             "recognized": True,
             "confidence": confidence,
-            "student": student_dict,
+            "student": {
+                "id": student[0],
+                "name": student[1],
+                "student_id": student[2],
+                "class": student[3],
+                "image": student[4]
+            },
             "attendance_recorded": attendance_recorded,
             "date": today,
             "time": now
@@ -473,106 +320,52 @@ def index():
 
 @app.route('/api/students', methods=['GET'])
 def get_students():
-    conn = get_db_connection()
-    
-    if isinstance(conn, psycopg2.extensions.connection):
-        cursor = conn.cursor(cursor_factory=DictCursor)
-        
-        cursor.execute("""
-            SELECT s.id, s.name, s.student_id, s.class, s.added_date,
-                (SELECT image_path FROM face_samples WHERE student_id = s.id LIMIT 1) as image,
-                COUNT(fs.id) as sample_count
-            FROM students s
-            LEFT JOIN face_samples fs ON s.id = fs.student_id
-            GROUP BY s.id
-        """)
-        
-        students = [dict(row) for row in cursor.fetchall()]
-    else:
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT s.id, s.name, s.student_id, s.class, s.added_date,
-                (SELECT image_path FROM face_samples WHERE student_id = s.id LIMIT 1) as image,
-                COUNT(fs.id) as sample_count
-            FROM students s
-            LEFT JOIN face_samples fs ON s.id = fs.student_id
-            GROUP BY s.id
-        """)
-        
-        columns = [column[0] for column in cursor.description]
-        students = []
-        for row in cursor.fetchall():
-            student = dict(zip(columns, row))
-            students.append(student)
-    
-    # Convert relative paths to absolute for frontend
-    for student in students:
-        if student["image"]:
-            student["image"] = get_absolute_path(student["image"])
-    
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT s.id, s.name, s.student_id, s.class, s.added_date,
+               (SELECT image_path FROM face_samples WHERE student_id = s.id LIMIT 1) as image,
+               COUNT(fs.id) as sample_count
+        FROM students s
+        LEFT JOIN face_samples fs ON s.id = fs.student_id
+        GROUP BY s.id
+    """)
+
+    students = [dict(row) for row in cursor.fetchall()]
     conn.close()
+
     return jsonify(students)
 
 @app.route('/api/students/<student_id>', methods=['GET'])
 def get_student(student_id):
-    conn = get_db_connection()
-    
-    if isinstance(conn, psycopg2.extensions.connection):
-        cursor = conn.cursor(cursor_factory=DictCursor)
-        
-        cursor.execute("""
-            SELECT s.id, s.name, s.student_id, s.class, s.added_date
-            FROM students s
-            WHERE s.id = %s
-        """, (student_id,))
-        
-        student = cursor.fetchone()
-        if not student:
-            conn.close()
-            return jsonify({"error": "Student not found"}), 404
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
 
-        student_data = dict(student)
+    cursor.execute("""
+        SELECT s.id, s.name, s.student_id, s.class, s.added_date
+        FROM students s
+        WHERE s.id = ?
+    """, (student_id,))
 
-        cursor.execute("""
-            SELECT id, image_path
-            FROM face_samples
-            WHERE student_id = %s
-        """, (student_id,))
-        
-        student_data['samples'] = [dict(row) for row in cursor.fetchall()]
-    else:
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT s.id, s.name, s.student_id, s.class, s.added_date
-            FROM students s
-            WHERE s.id = ?
-        """, (student_id,))
-        
-        row = cursor.fetchone()
-        if not row:
-            conn.close()
-            return jsonify({"error": "Student not found"}), 404
-            
-        columns = [column[0] for column in cursor.description]
-        student_data = dict(zip(columns, row))
+    student = cursor.fetchone()
+    if not student:
+        conn.close()
+        return jsonify({"error": "Student not found"}), 404
 
-        cursor.execute("""
-            SELECT id, image_path
-            FROM face_samples
-            WHERE student_id = ?
-        """, (student_id,))
-        
-        samples_columns = [column[0] for column in cursor.description]
-        student_data['samples'] = [dict(zip(samples_columns, row)) for row in cursor.fetchall()]
-    
-    # Convert relative paths to absolute for frontend
-    for sample in student_data['samples']:
-        if sample["image_path"]:
-            sample["image_path"] = get_absolute_path(sample["image_path"])
-    
+    student_data = dict(student)
+
+    cursor.execute("""
+        SELECT id, image_path
+        FROM face_samples
+        WHERE student_id = ?
+    """, (student_id,))
+
+    student_data['samples'] = [dict(row) for row in cursor.fetchall()]
     conn.close()
+
     return jsonify(student_data)
 
 @app.route('/api/students', methods=['POST'])
@@ -585,20 +378,12 @@ def add_student():
     student_uuid = str(uuid.uuid4())[:8]
     added_date = datetime.now().strftime("%Y-%m-%d")
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
-    if isinstance(conn, psycopg2.extensions.connection):
-        cursor.execute(
-            "INSERT INTO students (id, name, student_id, class, added_date) VALUES (%s, %s, %s, %s, %s)",
-            (student_uuid, data['name'], data['student_id'], data['class'], added_date)
-        )
-    else:
-        cursor.execute(
-            "INSERT INTO students (id, name, student_id, class, added_date) VALUES (?, ?, ?, ?, ?)",
-            (student_uuid, data['name'], data['student_id'], data['class'], added_date)
-        )
-        
+    cursor.execute(
+        "INSERT INTO students (id, name, student_id, class, added_date) VALUES (?, ?, ?, ?, ?)",
+        (student_uuid, data['name'], data['student_id'], data['class'], added_date)
+    )
     conn.commit()
     conn.close()
 
@@ -612,32 +397,22 @@ def add_student():
 
 @app.route('/api/students/<student_id>', methods=['DELETE'])
 def delete_student(student_id):
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    if isinstance(conn, psycopg2.extensions.connection):
-        cursor.execute("SELECT image_path FROM face_samples WHERE student_id = %s", (student_id,))
-    else:
-        cursor.execute("SELECT image_path FROM face_samples WHERE student_id = ?", (student_id,))
-        
+    cursor.execute("SELECT image_path FROM face_samples WHERE student_id = ?", (student_id,))
     image_paths = [row[0] for row in cursor.fetchall()]
 
-    if isinstance(conn, psycopg2.extensions.connection):
-        cursor.execute("DELETE FROM face_samples WHERE student_id = %s", (student_id,))
-        cursor.execute("DELETE FROM attendance WHERE student_id = %s", (student_id,))
-        cursor.execute("DELETE FROM students WHERE id = %s", (student_id,))
-    else:
-        cursor.execute("DELETE FROM face_samples WHERE student_id = ?", (student_id,))
-        cursor.execute("DELETE FROM attendance WHERE student_id = ?", (student_id,))
-        cursor.execute("DELETE FROM students WHERE id = ?", (student_id,))
+    cursor.execute("DELETE FROM face_samples WHERE student_id = ?", (student_id,))
+    cursor.execute("DELETE FROM attendance WHERE student_id = ?", (student_id,))
+    cursor.execute("DELETE FROM students WHERE id = ?", (student_id,))
 
     conn.commit()
     conn.close()
 
     for path in image_paths:
-        abs_path = get_absolute_path(path)
-        if os.path.exists(abs_path):
-            os.remove(abs_path)
+        if os.path.exists(path):
+            os.remove(path)
 
     fr_system.retrain_model()
 
@@ -697,19 +472,14 @@ def retrain():
 
 @app.route('/api/classes', methods=['GET'])
 def get_classes():
-    conn = get_db_connection()
-    
-    if isinstance(conn, psycopg2.extensions.connection):
-        cursor = conn.cursor(cursor_factory=DictCursor)
-        cursor.execute("SELECT * FROM classes")
-        classes = [dict(row) for row in cursor.fetchall()]
-    else:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM classes")
-        columns = [column[0] for column in cursor.description]
-        classes = [dict(zip(columns, row)) for row in cursor.fetchall()]
-        
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM classes")
+    classes = [dict(row) for row in cursor.fetchall()]
     conn.close()
+
     return jsonify(classes)
 
 @app.route('/api/classes', methods=['POST'])
@@ -719,22 +489,13 @@ def add_class():
     if not data or 'name' not in data:
         return jsonify({"error": "Class name is required"}), 400
 
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
-    if isinstance(conn, psycopg2.extensions.connection):
-        cursor.execute(
-            "INSERT INTO classes (name, schedule, teacher) VALUES (%s, %s, %s) RETURNING id",
-            (data['name'], data.get('schedule', ''), data.get('teacher', ''))
-        )
-        class_id = cursor.fetchone()[0]
-    else:
-        cursor.execute(
-            "INSERT INTO classes (name, schedule, teacher) VALUES (?, ?, ?)",
-            (data['name'], data.get('schedule', ''), data.get('teacher', ''))
-        )
-        class_id = cursor.lastrowid
-        
+    cursor.execute(
+        "INSERT INTO classes (name, schedule, teacher) VALUES (?, ?, ?)",
+        (data['name'], data.get('schedule', ''), data.get('teacher', ''))
+    )
+    class_id = cursor.lastrowid
     conn.commit()
     conn.close()
 
@@ -750,61 +511,33 @@ def get_attendance():
     date_param = request.args.get('date', date.today().strftime("%Y-%m-%d"))
     class_param = request.args.get('class')
     
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
     
-    if isinstance(conn, psycopg2.extensions.connection):
-        cursor = conn.cursor(cursor_factory=DictCursor)
+    query = ["""
+        SELECT a.id, a.student_id, a.check_in_time, a.date, a.class,
+               s.name, s.student_id as student_code
+        FROM attendance a
+        JOIN students s ON a.student_id = s.id
+        WHERE a.date = ?
+    """]
+    params = [date_param]
+    
+    if class_param:
+        query += " AND a.class = ?"
+        params.append(class_param)
         
-        query = """
-            SELECT a.id, a.student_id, a.check_in_time, a.date, a.class,
-                s.name, s.student_id as student_code
-            FROM attendance a
-            JOIN students s ON a.student_id = s.id
-            WHERE a.date = %s
-        """
-        params = [date_param]
-        
-        if class_param:
-            query += " AND a.class = %s"
-            params.append(class_param)
-            
-        cursor.execute(query, params)
-        attendance_records = [dict(row) for row in cursor.fetchall()]
-    else:
-        cursor = conn.cursor()
-        
-        query = """
-            SELECT a.id, a.student_id, a.check_in_time, a.date, a.class,
-                s.name, s.student_id as student_code
-            FROM attendance a
-            JOIN students s ON a.student_id = s.id
-            WHERE a.date = ?
-        """
-        params = [date_param]
-        
-        if class_param:
-            query += " AND a.class = ?"
-            params.append(class_param)
-            
-        cursor.execute(query, params)
-        columns = [column[0] for column in cursor.description]
-        attendance_records = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    cursor.execute(query, params)
+    attendance_records = [dict(row) for row in cursor.fetchall()]
     
     # Get all students in the class for reporting absences
     if class_param:
-        if isinstance(conn, psycopg2.extensions.connection):
-            cursor.execute("""
-                SELECT id, name, student_id FROM students 
-                WHERE class = %s
-            """, (class_param,))
-            all_students = [dict(row) for row in cursor.fetchall()]
-        else:
-            cursor.execute("""
-                SELECT id, name, student_id FROM students 
-                WHERE class = ?
-            """, (class_param,))
-            columns = [column[0] for column in cursor.description]
-            all_students = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        cursor.execute("""
+            SELECT id, name, student_id FROM students 
+            WHERE class = ?
+        """, (class_param,))
+        all_students = [dict(row) for row in cursor.fetchall()]
         
         # Mark present/absent
         present_ids = [record['student_id'] for record in attendance_records]
@@ -835,12 +568,57 @@ def attendance_report():
     class_param = request.args.get('class')
     student_id = request.args.get('student_id')
     
-    conn = get_db_connection()
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
     
-    if isinstance(conn, psycopg2.extensions.connection):
-        cursor = conn.cursor(cursor_factory=DictCursor)
+    query_parts = ["""
+        SELECT a.date, a.class,
+               COUNT(DISTINCT a.student_id) as present_count,
+               (SELECT COUNT(*) FROM students WHERE class = a.class) as total_students
+        FROM attendance a
+        JOIN students s ON a.student_id = s.id
+        WHERE 1=1
+    """]
+    params = []
+    
+    if start_date:
+        query_parts.append("AND a.date >= ?")
+        params.append(start_date)
         
-        query_parts = ["""
-            SELECT a.date, a.class,
-                COUNT(DISTINCT a.student_id) as present_count,
-                (SELECT COUNT(*) FROM students WHERE class = a.class)
+    if end_date:
+        query_parts.append("AND a.date <= ?")
+        params.append(end_date)
+        
+    if class_param:
+        query_parts.append("AND a.class = ?")
+        params.append(class_param)
+        
+    if student_id:
+        query_parts.append("AND s.student_id = ?")
+        params.append(student_id)
+        
+    query_parts.append("GROUP BY a.date, a.class")
+    query = " ".join(query_parts)
+    
+    cursor.execute(query, params)
+    report_data = [dict(row) for row in cursor.fetchall()]
+    
+    # Calculate attendance percentages
+    for record in report_data:
+        if record['total_students'] > 0:
+            record['attendance_rate'] = round((record['present_count'] / record['total_students']) * 100, 1)
+        else:
+            record['attendance_rate'] = 0
+            
+    conn.close()
+    return jsonify({
+        'start_date': start_date,
+        'end_date': end_date,
+        'class': class_param,
+        'student_id': student_id,
+        'report_data': report_data
+    })
+
+if __name__ == '__main__':
+    app.run(debug=True)
