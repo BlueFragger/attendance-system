@@ -6,6 +6,7 @@ import base64
 import uuid
 import sqlite3
 from datetime import datetime, date
+import traceback
 import psycopg2
 import tensorflow as tf
 from tensorflow.keras.models import Sequential, load_model
@@ -117,14 +118,23 @@ class FacialRecognitionSystem:
             Flatten(),
             Dense(128, activation='relu'),
             Dropout(0.5),
-            Dense(num_students, activation='softmax')
         ])
-
-        model.compile(
-            optimizer=Adam(learning_rate=0.001),
-            loss='sparse_categorical_crossentropy',
-            metrics=['accuracy']
-        )
+        
+        # Use sigmoid for binary classification (1 student) or softmax for multiple
+        if num_students == 1:
+            model.add(Dense(1, activation='sigmoid'))
+            model.compile(
+                optimizer=Adam(learning_rate=0.001),
+                loss='binary_crossentropy',
+                metrics=['accuracy']
+            )
+        else:
+            model.add(Dense(num_students, activation='softmax'))
+            model.compile(
+                optimizer=Adam(learning_rate=0.001),
+                loss='sparse_categorical_crossentropy',
+                metrics=['accuracy']
+            )
 
         return model
 
@@ -156,19 +166,23 @@ class FacialRecognitionSystem:
         face_img_resized = cv2.resize(face_img, (100, 100))
 
         filename = f"{uuid.uuid4()}.jpg"
+        # Store relative path instead of absolute path
+        relative_path = os.path.join('faces', filename)
         filepath = os.path.join(UPLOAD_FOLDER, filename)
+        
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         cv2.imwrite(filepath, face_img_resized)
 
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO face_samples (student_id, image_path) VALUES (?, ?)",
-            (student_id, filepath)
+            (student_id, relative_path)  # Store relative path
         )
         conn.commit()
         conn.close()
 
-        return filepath, None
+        return relative_path, None  # Return relative path
 
     def retrain_model(self):
         conn = sqlite3.connect(DB_PATH)
@@ -177,6 +191,12 @@ class FacialRecognitionSystem:
         cursor.execute("SELECT COUNT(*) FROM students")
         num_students = max(1, cursor.fetchone()[0])
 
+        if num_students == 0:
+            conn.close()
+            print("No students in database to train on")
+            return {"success": False, "error": "No students in database"}
+
+        # Recreate model if number of students changed
         if self.model.layers[-1].units != num_students:
             print(f"Recreating model for {num_students} students")
             self.model = self._create_model()
@@ -193,20 +213,27 @@ class FacialRecognitionSystem:
             JOIN students s ON fs.student_id = s.id
         """)
 
+        training_data = []
         for student_id, image_path in cursor.fetchall():
             if os.path.exists(image_path):
                 img = cv2.imread(image_path)
                 if img is not None:
                     img = cv2.resize(img, (100, 100)) / 255.0
-                    X_train.append(img)
-                    y_train.append(student_labels[student_id])
+                    training_data.append((img, student_labels[student_id]))
 
         conn.close()
 
-        X_train = np.array(X_train)
-        y_train = np.array(y_train)
+        if not training_data:
+            print("No training data available")
+            return {"success": False, "error": "No training data available"}
 
-        if len(X_train) > 0:
+        # Shuffle training data
+        np.random.shuffle(training_data)
+        X_train = np.array([x[0] for x in training_data])
+        y_train = np.array([x[1] for x in training_data])
+
+        try:
+            # Set up data augmentation
             datagen = ImageDataGenerator(
                 rotation_range=20,
                 width_shift_range=0.2,
@@ -217,18 +244,40 @@ class FacialRecognitionSystem:
                 fill_mode='nearest'
             )
 
-            self.model.fit(
-                datagen.flow(X_train, y_train, batch_size=32),
+            # Calculate steps per epoch
+            batch_size = 32
+            steps = max(1, len(X_train) // batch_size)
+
+            # Train the model
+            history = self.model.fit(
+                datagen.flow(X_train, y_train, batch_size=batch_size),
                 epochs=10,
-                steps_per_epoch=len(X_train) // 32 + 1
+                steps_per_epoch=steps,
+                verbose=1
             )
 
+            # Save the model
             self.model.save(self.model_path)
             print("Model retrained and saved successfully")
-            return True
-        else:
-            print("No training data available")
-            return False
+
+            # Calculate final accuracy
+            final_accuracy = history.history['accuracy'][-1] * 100
+            print(f"Final training accuracy: {final_accuracy:.2f}%")
+
+            return {
+                "success": True,
+                "accuracy": final_accuracy,
+                "num_samples": len(X_train),
+                "num_students": num_students
+            }
+
+        except Exception as e:
+            print(f"Error during training: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
 
     def recognize_face(self, image, class_id=None):
         faces = self.detect_faces(image)
@@ -314,9 +363,14 @@ class FacialRecognitionSystem:
 fr_system = FacialRecognitionSystem()
 
 # API Routes
+
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory(os.path.join(BASE_DIR, 'static'), filename)
 
 @app.route('/api/students', methods=['GET'])
 def get_students():
@@ -515,13 +569,13 @@ def get_attendance():
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    query = ["""
+    query = """
         SELECT a.id, a.student_id, a.check_in_time, a.date, a.class,
                s.name, s.student_id as student_code
         FROM attendance a
         JOIN students s ON a.student_id = s.id
         WHERE a.date = ?
-    """]
+    """
     params = [date_param]
     
     if class_param:
@@ -530,6 +584,8 @@ def get_attendance():
         
     cursor.execute(query, params)
     attendance_records = [dict(row) for row in cursor.fetchall()]
+    
+    # Rest of the function remains the same...
     
     # Get all students in the class for reporting absences
     if class_param:

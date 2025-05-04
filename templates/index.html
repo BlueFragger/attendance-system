@@ -565,7 +565,7 @@
                     <strong>${student.name}</strong> (ID: ${student.student_id})
                     <div>Class: ${student.class} | Added: ${student.added_date}</div>
                     <div class="sample-images">
-                        ${student.image ? `<img src="${student.image}" alt="Face sample">` : ''}
+                        ${student.image ? `<img src="/static/${student.image}" alt="Face sample">` : ''}
                         ${student.sample_count > 1 ? `<span>+${student.sample_count - 1} more samples</span>` : ''}
                     </div>
                 `;
@@ -787,10 +787,20 @@
         }
 
         // Retrain model
+// Update the retrainModel() function:
         async function retrainModel() {
             try {
                 retrainBtn.disabled = true;
                 retrainBtn.textContent = 'Training...';
+                
+                // Show training progress
+                const progressDiv = document.createElement('div');
+                progressDiv.id = 'training-progress';
+                progressDiv.innerHTML = `
+                    <div style="margin: 10px 0;">Training model...</div>
+                    <progress value="0" max="100" style="width: 100%;"></progress>
+                `;
+                recognitionResult.appendChild(progressDiv);
                 
                 const response = await fetch('/api/retrain', {
                     method: 'POST'
@@ -799,18 +809,35 @@
                 const result = await response.json();
                 
                 if (result.error) {
-                    alert('Error: ' + result.error);
+                    showRecognitionResult(false, 'Error: ' + result.error);
                 } else if (result.success) {
-                    alert('Model retrained successfully!');
+                    showRecognitionResult(true, 'Model retrained successfully!');
                 } else {
-                    alert('Retraining failed. No training data available.');
+                    showRecognitionResult(false, 'Retraining failed. No training data available.');
                 }
             } catch (error) {
                 console.error('Error retraining model:', error);
-                alert('Error retraining model. Please try again.');
+                showRecognitionResult(false, 'Error retraining model. Please try again.');
             } finally {
                 retrainBtn.disabled = false;
                 retrainBtn.textContent = 'Retrain Model';
+                document.getElementById('training-progress')?.remove();
+            }
+        }
+        async function handleApiCall(url, options = {}) {
+            try {
+                const response = await fetch(url, options);
+                
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    throw new Error(error.message || 'Request failed');
+                }
+                
+                return await response.json();
+            } catch (error) {
+                console.error('API Error:', error);
+                showRecognitionResult(false, error.message || 'An error occurred');
+                throw error;
             }
         }
 

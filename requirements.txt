@@ -4,3 +4,4 @@ numpy
 tensorflow
 psycopg2-binary
 scipy
+traceback
