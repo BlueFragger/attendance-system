@@ -501,6 +501,10 @@
                 const response = await fetch('/api/classes');
                 classes = await response.json();
                 
+                if (classes.length === 0) {
+                    alert("⚠️ No classes found. Please click 'Add New Class' to create one before adding students.");
+                }
+
                 // Populate class dropdowns
                 const classSelects = [
                     document.getElementById('student-class'),
