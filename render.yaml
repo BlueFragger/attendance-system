@@ -1,7 +1,9 @@
 services:
   - type: web
-    name: attendance-system
-    env: python
+    name: attendance-app # Choose a unique name for your app on Render
+    runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
-    autoDeploy: true
+    startCommand: gunicorn deepseek_python_20250505_b26c5a:app # Replace with your main Python file name if it's different (e.g., app:app)
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9 # Or your preferred Python version
