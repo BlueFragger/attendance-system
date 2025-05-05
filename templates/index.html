@@ -143,14 +143,16 @@
                 <video id="video" width="400" height="300" autoplay></video>
                 <canvas id="canvas" width="400" height="300"></canvas>
             </div>
-            <div class="form-group">
-                <label for="class-select">Class</label>
-                <select id="class-select">
-                    <option value="">All Classes</option>
-                    <!-- Classes will be loaded dynamically -->
-                </select>
-            </div>
-            <button id="capture-btn">Capture & Recognize</button>
+            <form id="recognize-form">
+                <div class="form-group">
+                    <label for="class-select">Class</label>
+                    <select id="class-select" name="class">
+                        <option value="">All Classes</option>
+                        <!-- Classes will be loaded dynamically -->
+                    </select>
+                </div>
+                <button id="capture-btn" type="button">Capture & Recognize</button>
+            </form>
             <div id="recognition-status" class="status hidden"></div>
             <div id="student-info" class="student-info hidden">
                 <h3>Student Information</h3>
@@ -161,45 +163,49 @@
         <!-- Register Student Tab -->
         <div id="tab-register" class="tab">
             <h2>Register New Student</h2>
-            <div class="form-group">
-                <label for="student-name">Name</label>
-                <input type="text" id="student-name" placeholder="Full Name">
-            </div>
-            <div class="form-group">
-                <label for="student-id">Student ID</label>
-                <input type="text" id="student-id" placeholder="Enrollment Number">
-            </div>
-            <div class="form-group">
-                <label for="student-class">Class</label>
-                <input type="text" id="student-class" placeholder="Class/Section">
-            </div>
-            <div class="video-container">
-                <video id="reg-video" width="400" height="300" autoplay></video>
-                <canvas id="reg-canvas" width="400" height="300"></canvas>
-            </div>
-            <button id="capture-face-btn">Capture Face</button>
-            <div id="captured-face" class="hidden">
-                <p>Face captured successfully!</p>
-                <button id="register-btn">Register Student</button>
-            </div>
+            <form id="register-form">
+                <div class="form-group">
+                    <label for="student-name">Name</label>
+                    <input type="text" id="student-name" name="name" placeholder="Full Name" required>
+                </div>
+                <div class="form-group">
+                    <label for="student-id">Student ID</label>
+                    <input type="text" id="student-id" name="student_id" placeholder="Enrollment Number" required>
+                </div>
+                <div class="form-group">
+                    <label for="student-class">Class</label>
+                    <input type="text" id="student-class" name="class" placeholder="Class/Section" required>
+                </div>
+                <div class="video-container">
+                    <video id="reg-video" width="400" height="300" autoplay></video>
+                    <canvas id="reg-canvas" width="400" height="300"></canvas>
+                </div>
+                <button id="capture-face-btn" type="button">Capture Face</button>
+                <div id="captured-face" class="hidden">
+                    <p>Face captured successfully!</p>
+                    <button id="register-btn" type="submit">Register Student</button>
+                </div>
+            </form>
             <div id="registration-status" class="status hidden"></div>
         </div>
         
         <!-- View Attendance Tab -->
         <div id="tab-attendance" class="tab">
             <h2>Attendance Records</h2>
-            <div class="form-group">
-                <label for="filter-class">Filter by Class</label>
-                <select id="filter-class">
-                    <option value="">All Classes</option>
-                    <!-- Classes will be loaded dynamically -->
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="filter-date">Filter by Date</label>
-                <input type="date" id="filter-date">
-            </div>
-            <button id="filter-btn">Apply Filter</button>
+            <form id="filter-form">
+                <div class="form-group">
+                    <label for="filter-class">Filter by Class</label>
+                    <select id="filter-class" name="class">
+                        <option value="">All Classes</option>
+                        <!-- Classes will be loaded dynamically -->
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="filter-date">Filter by Date</label>
+                    <input type="date" id="filter-date" name="date">
+                </div>
+                <button id="filter-btn" type="submit">Apply Filter</button>
+            </form>
             <div class="table-container">
                 <table id="attendance-table">
                     <thead>
@@ -367,7 +373,9 @@
             });
         }
         
-        function registerStudent() {
+        function registerStudent(event) {
+            event.preventDefault();
+            
             const name = document.getElementById('student-name').value;
             const studentId = document.getElementById('student-id').value;
             const studentClass = document.getElementById('student-class').value;
@@ -399,6 +407,9 @@
                     document.getElementById('student-class').value = '';
                     document.getElementById('captured-face').classList.add('hidden');
                     capturedImage = null;
+                    
+                    // Update class dropdowns to include the new class
+                    loadUniqueClasses();
                 } else {
                     showStatus('registration-status', data.error || 'Registration failed', true);
                 }
@@ -431,30 +442,34 @@
             fetch(url)
             .then(response => response.json())
             .then(data => {
-                const tableBody = document.getElementById('attendance-data');
-                tableBody.innerHTML = '';
-                
-                if (data.length === 0) {
-                    tableBody.innerHTML = '<tr><td colspan="5">No attendance records found</td></tr>';
-                    return;
-                }
-                
-                data.forEach(record => {
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td>${record.student_name}</td>
-                        <td>${record.student_id}</td>
-                        <td>${record.class}</td>
-                        <td>${record.date}</td>
-                        <td>${record.check_in_time}</td>
-                    `;
-                    tableBody.appendChild(row);
-                });
+                displayAttendanceRecords(data);
             })
             .catch(error => {
                 console.error('Error loading attendance data:', error);
                 document.getElementById('attendance-data').innerHTML = 
                     '<tr><td colspan="5">Error loading attendance data</td></tr>';
+            });
+        }
+        
+        function displayAttendanceRecords(records) {
+            const tableBody = document.getElementById('attendance-data');
+            tableBody.innerHTML = '';
+            
+            if (records.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="5">No attendance records found</td></tr>';
+                return;
+            }
+            
+            records.forEach(record => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${record.student_name}</td>
+                    <td>${record.student_id}</td>
+                    <td>${record.class}</td>
+                    <td>${record.date}</td>
+                    <td>${record.check_in_time}</td>
+                `;
+                tableBody.appendChild(row);
             });
         }
         
@@ -501,6 +516,8 @@
             .then(data => {
                 if (data.success) {
                     loadStudentsData(); // Reload data
+                    // Update class dropdowns after student deletion
+                    loadUniqueClasses();
                 } else {
                     alert('Failed to delete student');
                 }
@@ -511,29 +528,40 @@
             });
         }
         
-        function loadClasses() {
-            fetch('/api/classes')
+        // NEW FUNCTION: Load unique classes from students table
+        function loadUniqueClasses() {
+            fetch('/api/unique_classes')
             .then(response => response.json())
-            .then(data => {
-                const classSelects = [
+            .then(classes => {
+                // Get all class dropdowns
+                const classDropdowns = [
                     document.getElementById('class-select'),
                     document.getElementById('filter-class')
                 ];
                 
-                classSelects.forEach(select => {
-                    if (!select) return;
+                classDropdowns.forEach(dropdown => {
+                    if (!dropdown) return;
                     
-                    // Keep the first option (All Classes)
-                    const firstOption = select.options[0];
-                    select.innerHTML = '';
-                    select.appendChild(firstOption);
+                    // Save current selection
+                    const currentValue = dropdown.value;
                     
-                    data.forEach(cls => {
-                        const option = document.createElement('option');
-                        option.value = cls.name;
-                        option.textContent = cls.name;
-                        select.appendChild(option);
+                    // Clear existing options except the first one (All Classes)
+                    dropdown.innerHTML = '<option value="">All Classes</option>';
+                    
+                    // Add options for each class
+                    classes.forEach(className => {
+                        if (className) { // Skip empty class names
+                            const option = document.createElement('option');
+                            option.value = className;
+                            option.textContent = className;
+                            dropdown.appendChild(option);
+                        }
                     });
+                    
+                    // Restore previous selection if it exists
+                    if (currentValue && classes.includes(currentValue)) {
+                        dropdown.value = currentValue;
+                    }
                 });
             })
             .catch(error => {
@@ -547,7 +575,7 @@
             startCamera(videoElement);
             
             // Load initial data
-            loadClasses();
+            loadUniqueClasses();
             
             // Set up event listeners
             document.getElementById('capture-btn').addEventListener('click', recognizeFace);
@@ -557,9 +585,18 @@
                 document.getElementById('captured-face').classList.remove('hidden');
             });
             
-            document.getElementById('register-btn').addEventListener('click', registerStudent);
+            const registerForm = document.getElementById('register-form');
+            if (registerForm) {
+                registerForm.addEventListener('submit', registerStudent);
+            }
             
-            document.getElementById('filter-btn').addEventListener('click', loadAttendanceData);
+            const filterForm = document.getElementById('filter-form');
+            if (filterForm) {
+                filterForm.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    loadAttendanceData();
+                });
+            }
         });
         
         // Cleanup on page unload

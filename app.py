@@ -567,6 +567,38 @@ def get_classes():
         print(f"Error getting classes: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/unique_classes', methods=['GET'])
+def get_unique_classes():
+    """Get a list of unique classes from registered students"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get unique classes from students table
+        cursor.execute("SELECT DISTINCT class FROM students ORDER BY class")
+        classes = [row['class'] for row in cursor.fetchall()]
+        
+        # Also get classes from the classes table if it exists
+        cursor.execute("SELECT DISTINCT name FROM classes ORDER BY name")
+        class_names = [row['name'] for row in cursor.fetchall()]
+        
+        # Combine and remove duplicates
+        all_classes = list(set(classes + class_names))
+        all_classes.sort()  # Sort alphabetically
+        
+        # Make sure "All Classes" is not in the database results
+        if "All Classes" in all_classes:
+            all_classes.remove("All Classes")
+            
+        # Return with "All Classes" as the first option
+        result = ["All Classes"] + all_classes
+        
+        conn.close()
+        return jsonify(result)
+    except Exception as e:
+        print(f"Error getting unique classes: {e}")
+        return jsonify(["All Classes"]), 500
+
 # Attendance Management
 @app.route('/api/attendance', methods=['GET'])
 def get_attendance():
@@ -576,25 +608,37 @@ def get_attendance():
         start_date = request.args.get('start_date', '')
         end_date = request.args.get('end_date', '')
         
+        attendance = get_filtered_attendance(class_filter, date_filter, start_date, end_date)
+        return jsonify(attendance)
+    except Exception as e:
+        print(f"Error getting attendance: {e}")
+        return jsonify({"error": str(e)}), 500
+
+def get_filtered_attendance(class_filter=None, date_filter=None, start_date=None, end_date=None):
+    """Get filtered attendance records with proper handling of 'All Classes'"""
+    try:
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # MODIFIED QUERY - Use the enrollment_id as student_id in the results
         query = """
             SELECT a.id, s.student_id as student_id, a.class, a.check_in_time, a.date,
                    s.name as student_name, s.id as internal_id, s.class as student_class
             FROM attendance a
             JOIN students s ON a.student_id = s.id
         """
-        params = []
         
+        params = []
         conditions = []
-        if class_filter:
-            conditions.append("s.class = ?")
+        
+        # Handle class filter properly
+        if class_filter and class_filter.lower() != "all classes":
+            conditions.append("a.class = ?")  # Filter on the actual recorded class
             params.append(class_filter)
+            
         if date_filter:
             conditions.append("a.date = ?")
             params.append(date_filter)
+            
         if start_date and end_date:
             conditions.append("a.date BETWEEN ? AND ?")
             params.extend([start_date, end_date])
@@ -606,10 +650,10 @@ def get_attendance():
         cursor.execute(query, params)
         attendance = [dict(record) for record in cursor.fetchall()]
         conn.close()
-        return jsonify(attendance)
+        return attendance
     except Exception as e:
-        print(f"Error getting attendance: {e}")
-        return jsonify({"error": str(e)}), 500
+        print(f"Error in get_filtered_attendance: {e}")
+        return []
 
 # Face Recognition
 @app.route('/api/recognize', methods=['POST'])
