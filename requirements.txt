@@ -4,3 +4,5 @@ numpy
 tensorflow
 psycopg2-binary
 scipy
+face_recognition
+python-dotenv
