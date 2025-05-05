@@ -33,22 +33,37 @@
         }
         .tab-buttons {
             margin-bottom: 20px;
-            border-bottom: 1px solid #ddd;
+            border-bottom: 2px solid #3498db;
             padding-bottom: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
         }
         .tab-button {
-            background: #f8f8f8;
-            border: 1px solid #ddd;
-            padding: 8px 15px;
+            background: #e8f4fc;
+            border: 1px solid #3498db;
+            padding: 10px 18px;
             margin-right: 5px;
             cursor: pointer;
-            border-radius: 3px 3px 0 0;
+            border-radius: 5px;
+            font-weight: bold;
+            color: #2980b9;
+            transition: all 0.3s ease;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .tab-button:hover {
+            background: #d1ebf9;
+            transform: translateY(-2px);
+            box-shadow: 0 3px 5px rgba(0,0,0,0.15);
         }
         .tab-button.active {
-            background: #2c3e50;
+            background: #3498db;
             color: white;
-            border-color: #2c3e50;
+            border-color: #2980b9;
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
+        /* Keep the rest of your CSS unchanged */
         .form-group {
             margin-bottom: 15px;
         }
