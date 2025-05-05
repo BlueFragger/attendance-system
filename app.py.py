@@ -215,17 +215,11 @@ class FacialRecognitionSystem:
 
         training_data = []
         for student_id, image_path in cursor.fetchall():
-            # Check if image_path exists before trying to read it
-            full_image_path = os.path.join(BASE_DIR, 'static', image_path)
-            if os.path.exists(full_image_path):
-                img = cv2.imread(full_image_path)
+            if os.path.exists(image_path):
+                img = cv2.imread(image_path)
                 if img is not None:
                     img = cv2.resize(img, (100, 100)) / 255.0
                     training_data.append((img, student_labels[student_id]))
-                else:
-                    print(f"Warning: Could not read image at {full_image_path}")
-            else:
-                print(f"Warning: Image path does not exist: {full_image_path}")
 
         conn.close()
 
@@ -330,12 +324,13 @@ class FacialRecognitionSystem:
         # Record attendance
         today = date.today().strftime("%Y-%m-%d")
         now = datetime.now().strftime("%H:%M:%S")
-
+        
         # Check if attendance already recorded today
         cursor.execute("""
-            SELECT id FROM attendance WHERE student_id = ? AND date = ? AND class = ?
+            SELECT id FROM attendance 
+            WHERE student_id = ? AND date = ? AND class = ?
         """, (student[0], today, student[3] if class_id is None else class_id))
-
+        
         if cursor.fetchone() is None:
             # Record new attendance
             cursor.execute("""
@@ -345,7 +340,7 @@ class FacialRecognitionSystem:
             attendance_recorded = True
         else:
             attendance_recorded = False
-
+            
         conn.commit()
         conn.close()
 
@@ -368,6 +363,7 @@ class FacialRecognitionSystem:
 fr_system = FacialRecognitionSystem()
 
 # API Routes
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -381,6 +377,7 @@ def get_students():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
+
     cursor.execute("""
         SELECT s.id, s.name, s.student_id, s.class, s.added_date,
                (SELECT image_path FROM face_samples WHERE student_id = s.id LIMIT 1) as image,
@@ -389,8 +386,10 @@ def get_students():
         LEFT JOIN face_samples fs ON s.id = fs.student_id
         GROUP BY s.id
     """)
+
     students = [dict(row) for row in cursor.fetchall()]
     conn.close()
+
     return jsonify(students)
 
 @app.route('/api/students/<student_id>', methods=['GET'])
@@ -398,164 +397,314 @@ def get_student(student_id):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
+
     cursor.execute("""
         SELECT s.id, s.name, s.student_id, s.class, s.added_date
         FROM students s
         WHERE s.id = ?
     """, (student_id,))
+
     student = cursor.fetchone()
     if not student:
         conn.close()
         return jsonify({"error": "Student not found"}), 404
+
     student_data = dict(student)
+
     cursor.execute("""
-        SELECT id, image_path FROM face_samples WHERE student_id = ?
+        SELECT id, image_path
+        FROM face_samples
+        WHERE student_id = ?
     """, (student_id,))
+
     student_data['samples'] = [dict(row) for row in cursor.fetchall()]
     conn.close()
+
     return jsonify(student_data)
 
 @app.route('/api/students', methods=['POST'])
 def add_student():
     data = request.json
-    if not data or 'name' not in data or 'student_id' not in data or 'class' not in data:
-        return jsonify({"error": "Name, student ID, and class are required"}), 400
-    student_uuid = str(uuid.uuid4())
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO students (id, name, student_id, class, added_date)
-        VALUES (?, ?, ?, ?, ?)
-    """, (student_uuid, data['name'], data['student_id'], data['class'], datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    conn.commit()
-    conn.close()
-    return jsonify({"message": "Student added successfully", "student_id": student_uuid}), 201
 
-@app.route('/api/students/<student_id>', methods=['PUT'])
-def update_student(student_id):
-    data = request.json
     if not data or 'name' not in data or 'student_id' not in data or 'class' not in data:
         return jsonify({"error": "Name, student ID, and class are required"}), 400
+
+    student_uuid = str(uuid.uuid4())[:8]
+    added_date = datetime.now().strftime("%Y-%m-%d")
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE students SET name = ?, student_id = ?, class = ?
-        WHERE id data: data,
-        WHERE id = ?""", (data['name'], data['student_id'], data['class'], student_id))
+    cursor.execute(
+        "INSERT INTO students (id, name, student_id, class, added_date) VALUES (?, ?, ?, ?, ?)",
+        (student_uuid, data['name'], data['student_id'], data['class'], added_date)
+    )
     conn.commit()
     conn.close()
-    return jsonify({"message": "Student updated successfully"}), 200
+
+    return jsonify({
+        "id": student_uuid,
+        "name": data['name'],
+        "student_id": data['student_id'],
+        "class": data['class'],
+        "added_date": added_date
+    })
 
 @app.route('/api/students/<student_id>', methods=['DELETE'])
 def delete_student(student_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+
+    cursor.execute("SELECT image_path FROM face_samples WHERE student_id = ?", (student_id,))
+    image_paths = [row[0] for row in cursor.fetchall()]
+
     cursor.execute("DELETE FROM face_samples WHERE student_id = ?", (student_id,))
     cursor.execute("DELETE FROM attendance WHERE student_id = ?", (student_id,))
     cursor.execute("DELETE FROM students WHERE id = ?", (student_id,))
+
     conn.commit()
     conn.close()
-    return jsonify({"message": "Student and related data deleted successfully"}), 200
 
-@app.route('/api/students/<student_id>/faces', methods=['POST'])
-def add_face_sample_route(student_id):
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
+    for path in image_paths:
+        if os.path.exists(path):
+            os.remove(path)
+
+    fr_system.retrain_model()
+
+    return jsonify({"success": True})
+
+@app.route('/api/face_samples', methods=['POST'])
+def add_face_sample():
+    if 'image' not in request.json or 'student_id' not in request.json:
+        return jsonify({"error": "Image and student_id are required"}), 400
+
     try:
-        if file:
-            img = cv2.imdecode(np.frombuffer(file.read(), np.uint8), cv2.IMREAD_COLOR)
-            if img is None:
-                return jsonify({"error": "Invalid image file"}), 400
-            
-            filepath, error = fr_system.add_face_sample(img, student_id)
-            if error:
-                return jsonify({"error": error}), 400
-            return jsonify({"message": "Face sample added successfully", "filepath": filepath}), 201
-        else:
-            return jsonify({"error": "No file provided"}), 400
+        image_data = request.json['image'].split(',')[1]
+        image_bytes = base64.b64decode(image_data)
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        filepath, error = fr_system.add_face_sample(image, request.json['student_id'])
+        if error:
+            return jsonify({"error": error}), 400
+
+        return jsonify({
+            "success": True,
+            "filepath": filepath
+        })
     except Exception as e:
-        print(f"Error adding face sample: {traceback.format_exc()}")
-        return jsonify({"error": "Failed to add face sample"}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/recognize', methods=['POST'])
-def recognize_face_route():
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-    try:
-        if file:
-            img = cv2.imdecode(np.frombuffer(file.read(), np.uint8), cv2.IMREAD_COLOR)
-            if img is None:
-                return jsonify({"error": "Invalid image file"}), 400
+def recognize():
+    if 'image' not in request.json:
+        return jsonify({"error": "Image is required"}), 400
 
-            class_id = request.form.get('class_id')  # Get class_id from form data if available
-            result, error = fr_system.recognize_face(img, class_id)
-            if error:
-                return jsonify({"error": error}), 400
-            return jsonify(result), 200
-        else:
-            return jsonify({"error": "No file provided"}), 400
+    class_id = request.json.get('class_id')
+
+    try:
+        image_data = request.json['image'].split(',')[1]
+        image_bytes = base64.b64decode(image_data)
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        result, error = fr_system.recognize_face(image, class_id)
+
+        if error:
+            return jsonify({"error": error}), 400
+
+        return jsonify(result)
     except Exception as e:
-        print(f"Error during recognition: {traceback.format_exc()}")
-        return jsonify({"error": "Failed to recognize face"}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/retrain', methods=['POST'])
-def retrain_model_route():
+def retrain():
     try:
-        result = fr_system.retrain_model()
-        if result["success"]:
-            return jsonify({"message": "Model retrained successfully", "details": result}), 200
-        else:
-            return jsonify({"error": "Model retraining failed", "details": result["error"]}), 500
+        # Get training data count first
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT COUNT(*) FROM students")
+        num_students = cursor.fetchone()[0]
+        
+        if num_students == 0:
+            conn.close()
+            return jsonify({
+                "success": False,
+                "error": "No students in database to train on"
+            })
+        
+        # Get all training samples with absolute paths
+        cursor.execute("""
+            SELECT fs.student_id, fs.image_path
+            FROM face_samples fs
+            JOIN students s ON fs.student_id = s.id
+        """)
+        
+        training_data = []
+        for student_id, image_path in cursor.fetchall():
+            # Convert relative path to absolute path
+            abs_path = os.path.join(BASE_DIR, 'static', image_path)
+            if os.path.exists(abs_path):
+                img = cv2.imread(abs_path)
+                if img is not None:
+                    img = cv2.resize(img, (100, 100)) / 255.0
+                    training_data.append((img, student_id))
+        
+        conn.close()
+        
+        if not training_data:
+            return jsonify({
+                "success": False,
+                "error": "No valid training images found"
+            })
+        
+        # Create student to label mapping
+        student_ids = sorted(list(set([x[1] for x in training_data])))
+        student_to_label = {sid: i for i, sid in enumerate(student_ids)}
+        
+        # Prepare X and y
+        X_train = np.array([x[0] for x in training_data])
+        y_train = np.array([student_to_label[x[1]] for x in training_data])
+        
+        # Recreate model if needed
+        if (not hasattr(fr_system.model, 'layers') or 
+            fr_system.model.layers[-1].units != len(student_ids)):
+            print(f"Recreating model for {len(student_ids)} students")
+            fr_system.model = fr_system._create_model()
+        
+        # Train the model
+        batch_size = 32
+        steps_per_epoch = max(1, len(X_train) // batch_size)
+        
+        history = fr_system.model.fit(
+            X_train, y_train,
+            batch_size=batch_size,
+            epochs=10,
+            validation_split=0.2,
+            verbose=1
+        )
+        
+        # Save the model
+        fr_system.model.save(fr_system.model_path)
+        
+        return jsonify({
+            "success": True,
+            "accuracy": float(history.history['accuracy'][-1] * 100),
+            "num_samples": len(X_train),
+            "num_students": len(student_ids)
+        })
+        
     except Exception as e:
-        print(f"Error during retraining: {traceback.format_exc()}")
-        return jsonify({"error": "Failed to retrain model", "details": str(e)}), 500
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/api/classes', methods=['GET'])
+def get_classes():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM classes")
+    classes = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    return jsonify(classes)
+
+@app.route('/api/classes', methods=['POST'])
+def add_class():
+    data = request.json
+
+    if not data or 'name' not in data:
+        return jsonify({"error": "Class name is required"}), 400
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO classes (name, schedule, teacher) VALUES (?, ?, ?)",
+        (data['name'], data.get('schedule', ''), data.get('teacher', ''))
+    )
+    class_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "id": class_id,
+        "name": data['name'],
+        "schedule": data.get('schedule', ''),
+        "teacher": data.get('teacher', '')
+    })
 
 @app.route('/api/attendance', methods=['GET'])
 def get_attendance():
+    date_param = request.args.get('date', date.today().strftime("%Y-%m-%d"))
+    class_param = request.args.get('class')
+    
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT a.id, a.student_id, a.class, a.check_in_time, a.date, s.name, s.student_id as student_number
+    
+    query = """
+        SELECT a.id, a.student_id, a.check_in_time, a.date, a.class,
+               s.name, s.student_id as student_code
         FROM attendance a
         JOIN students s ON a.student_id = s.id
-    """)
+        WHERE a.date = ?
+    """
+    params = [date_param]
+    
+    if class_param:
+        query += " AND a.class = ?"
+        params.append(class_param)
+        
+    cursor.execute(query, params)
     attendance_records = [dict(row) for row in cursor.fetchall()]
+    
+    # Rest of the function remains the same...
+    
+    # Get all students in the class for reporting absences
+    if class_param:
+        cursor.execute("""
+            SELECT id, name, student_id FROM students 
+            WHERE class = ?
+        """, (class_param,))
+        all_students = [dict(row) for row in cursor.fetchall()]
+        
+        # Mark present/absent
+        present_ids = [record['student_id'] for record in attendance_records]
+        for student in all_students:
+            student['present'] = student['id'] in present_ids
+            
+        attendance_data = {
+            'date': date_param,
+            'class': class_param,
+            'attendance_records': attendance_records,
+            'all_students': all_students,
+            'present_count': len(present_ids),
+            'absent_count': len(all_students) - len(present_ids)
+        }
+    else:
+        attendance_data = {
+            'date': date_param,
+            'attendance_records': attendance_records
+        }
+    
     conn.close()
-    return jsonify(attendance_records)
-
-@app.route('/api/attendance/<student_id>', methods=['GET'])
-def get_attendance_for_student(student_id):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT a.id, a.student_id, a.class, a.check_in_time, a.date, s.name, s.student_id as student_number
-        FROM attendance a
-        JOIN students s ON a.student_id = s.id
-        WHERE a.student_id = ?
-    """, (student_id,))
-    attendance_records = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return jsonify(attendance_records)
+    return jsonify(attendance_data)
 
 @app.route('/api/attendance/report', methods=['GET'])
-def get_attendance_report():
+def attendance_report():
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date', date.today().strftime("%Y-%m-%d"))
+    class_param = request.args.get('class')
+    student_id = request.args.get('student_id')
+    
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    class_param = request.args.get('class')
-    student_id = request.args.get('student_id')
-
+    
     query_parts = ["""
         SELECT a.date, a.class,
                COUNT(DISTINCT a.student_id) as present_count,
@@ -565,36 +714,36 @@ def get_attendance_report():
         WHERE 1=1
     """]
     params = []
-
+    
     if start_date:
         query_parts.append("AND a.date >= ?")
         params.append(start_date)
-
+        
     if end_date:
         query_parts.append("AND a.date <= ?")
         params.append(end_date)
-
+        
     if class_param:
         query_parts.append("AND a.class = ?")
         params.append(class_param)
-
+        
     if student_id:
         query_parts.append("AND s.student_id = ?")
         params.append(student_id)
-
+        
     query_parts.append("GROUP BY a.date, a.class")
     query = " ".join(query_parts)
-
+    
     cursor.execute(query, params)
     report_data = [dict(row) for row in cursor.fetchall()]
-
+    
     # Calculate attendance percentages
     for record in report_data:
         if record['total_students'] > 0:
             record['attendance_rate'] = round((record['present_count'] / record['total_students']) * 100, 1)
         else:
             record['attendance_rate'] = 0
-
+            
     conn.close()
     return jsonify({
         'start_date': start_date,
@@ -603,63 +752,6 @@ def get_attendance_report():
         'student_id': student_id,
         'report_data': report_data
     })
-
-@app.route('/api/classes', methods=['GET'])
-def get_classes():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, name, schedule, teacher FROM classes")
-    classes = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return jsonify(classes)
-
-@app.route('/api/classes', methods=['POST'])
-def add_class():
-    data = request.json
-    if not data or 'name' not in data:
-        return jsonify({"error": "Class name is required"}), 400
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO classes (name, schedule, teacher) VALUES (?, ?, ?)",
-                   (data.get('name'), data.get('schedule'), data.get('teacher')))
-    conn.commit()
-    conn.close()
-    return jsonify({"message": "Class added successfully"}), 201
-
-@app.route('/api/classes/<int:class_id>', methods=['GET'])
-def get_class(class_id):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, name, schedule, teacher FROM classes WHERE id = ?", (class_id,))
-    class_data = cursor.fetchone()
-    conn.close()
-    if not class_data:
-        return jsonify({"error": "Class not found"}), 404
-    return jsonify(dict(class_data))
-
-@app.route('/api/classes/<int:class_id>', methods=['PUT'])
-def update_class(class_id):
-    data = request.json
-    if not data or 'name' not in data:
-        return jsonify({"error": "Class name is required"}), 400
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE classes SET name = ?, schedule = ?, teacher = ? WHERE id = ?",
-                   (data.get('name'), data.get('schedule'), data.get('teacher'), class_id))
-    conn.commit()
-    conn.close()
-    return jsonify({"message": "Class updated successfully"}), 200
-
-@app.route('/api/classes/<int:class_id>', methods=['DELETE'])
-def delete_class(class_id):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM classes WHERE id = ?", (class_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({"message": "Class deleted successfully"}), 200
 
 port = int(os.environ.get("PORT", 5000))
 app.run(host="0.0.0.0", port=port)

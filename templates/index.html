@@ -798,8 +798,10 @@
                 progressDiv.id = 'training-progress';
                 progressDiv.innerHTML = `
                     <div style="margin: 10px 0;">Training model...</div>
-                    <progress value="0" max="100" style="width: 100%;"></progress>
+                    <div id="training-status">Preparing data...</div>
+                    <progress id="training-progress-bar" value="0" max="100" style="width: 100%;"></progress>
                 `;
+                recognitionResult.innerHTML = '';
                 recognitionResult.appendChild(progressDiv);
                 
                 const response = await fetch('/api/retrain', {
@@ -811,9 +813,14 @@
                 if (result.error) {
                     showRecognitionResult(false, 'Error: ' + result.error);
                 } else if (result.success) {
-                    showRecognitionResult(true, 'Model retrained successfully!');
+                    showRecognitionResult(true, `
+                        Model retrained successfully!<br>
+                        Accuracy: ${result.accuracy.toFixed(2)}%<br>
+                        Samples: ${result.num_samples}<br>
+                        Students: ${result.num_students}
+                    `);
                 } else {
-                    showRecognitionResult(false, 'Retraining failed. No training data available.');
+                    showRecognitionResult(false, 'Retraining failed. ' + (result.error || 'No training data available.'));
                 }
             } catch (error) {
                 console.error('Error retraining model:', error);
@@ -821,7 +828,6 @@
             } finally {
                 retrainBtn.disabled = false;
                 retrainBtn.textContent = 'Retrain Model';
-                document.getElementById('training-progress')?.remove();
             }
         }
         async function handleApiCall(url, options = {}) {
