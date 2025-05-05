@@ -1,4 +1,6 @@
 from flask import Flask, request, jsonify, render_template, send_from_directory
+from datetime import datetime, date, timezone
+import pytz  
 import os
 import cv2
 import numpy as np
@@ -77,6 +79,11 @@ def execute_with_retry(query, params=(), max_retries=5, retry_delay=1.0):
                 conn.close()
     
     raise sqlite3.OperationalError(f"Database still locked after {max_retries} attempts")
+
+def get_philippines_datetime():
+    """Return current date and time in Philippines timezone"""
+    manila_tz = pytz.timezone('Asia/Manila')
+    return datetime.now(pytz.utc).astimezone(manila_tz)
 
 def init_db():
     conn = get_db_connection()
@@ -496,9 +503,10 @@ def register_student():
         student_id = str(uuid.uuid4())
         
         # Save student info first with retry logic
+        philippines_date = get_philippines_datetime().strftime("%Y-%m-%d")
         execute_with_retry(
             "INSERT INTO students (id, name, student_id, class, added_date) VALUES (?, ?, ?, ?, ?)",
-            (student_id, data['name'], data['student_id'], data['class'], datetime.now().strftime("%Y-%m-%d"))
+            (student_id, data['name'], data['student_id'], data['class'], philippines_date)
         )
         
         # Process face sample
@@ -571,8 +579,10 @@ def get_attendance():
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        # MODIFIED QUERY - Use the enrollment_id as student_id in the results
         query = """
-            SELECT a.*, s.name as student_name, s.student_id as enrollment_id, s.class 
+            SELECT a.id, s.student_id as student_id, a.class, a.check_in_time, a.date,
+                   s.name as student_name, s.id as internal_id, s.class as student_class
             FROM attendance a
             JOIN students s ON a.student_id = s.id
         """
@@ -722,8 +732,9 @@ def fixed_recognize_face():
             })
         
         # Step 4: Record attendance
-        today = date.today().strftime("%Y-%m-%d")
-        now = datetime.now().strftime("%H:%M:%S")
+        ph_datetime = get_philippines_datetime()
+        today = ph_datetime.strftime("%Y-%m-%d")
+        now = ph_datetime.strftime("%H:%M:%S")
         
         # FIX HERE: Properly handle class_id
         # If class_id is None, empty string, "All Classes", or "all" (case insensitive), use student's default class
