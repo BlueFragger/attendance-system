@@ -123,6 +123,28 @@
             background: #f8d7da;
             color: #721c24;
         }
+        
+        .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.5);
+        }
+        .modal-content {
+            background-color: white;
+            margin: 15% auto;
+            padding: 20px;
+            width: 80%;
+            max-width: 500px;
+            border-radius: 5px;
+        }
+        .modal.hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -144,11 +166,33 @@
                 <canvas id="canvas" width="400" height="300"></canvas>
             </div>
             <div class="form-group">
-                <label for="class-select">Class</label>
-                <select id="class-select">
-                    <option value="">All Classes</option>
+                <label for="student-class">Class</label>
+                <select id="student-class">
+                    <option value="">Select Class</option>
                     <!-- Classes will be loaded dynamically -->
                 </select>
+                <small>Or <a href="#" onclick="showAddClassForm()">add new class</a></small>
+            </div>
+            
+            <!-- Add this modal for adding new classes -->
+            <div id="add-class-modal" class="modal hidden">
+                <div class="modal-content">
+                    <h3>Add New Class</h3>
+                    <div class="form-group">
+                        <label for="new-class-name">Class Name</label>
+                        <input type="text" id="new-class-name">
+                    </div>
+                    <div class="form-group">
+                        <label for="new-class-schedule">Schedule</label>
+                        <input type="text" id="new-class-schedule" placeholder="e.g., Mon/Wed 10-11am">
+                    </div>
+                    <div class="form-group">
+                        <label for="new-class-teacher">Teacher</label>
+                        <input type="text" id="new-class-teacher">
+                    </div>
+                    <button onclick="addNewClass()">Add Class</button>
+                    <button onclick="hideAddClassForm()">Cancel</button>
+                </div>
             </div>
             <button id="capture-btn">Capture & Recognize</button>
             <div id="recognition-status" class="status hidden"></div>
@@ -286,6 +330,55 @@
             }
         }
         
+        function showAddClassForm() {
+            event.preventDefault();
+            document.getElementById('add-class-modal').classList.remove('hidden');
+        }
+    
+        function hideAddClassForm() {
+            document.getElementById('add-class-modal').classList.add('hidden');
+        }
+        
+        function addNewClass() {
+            const name = document.getElementById('new-class-name').value;
+            const schedule = document.getElementById('new-class-schedule').value;
+            const teacher = document.getElementById('new-class-teacher').value;
+            
+            if (!name) {
+                alert('Class name is required');
+                return;
+            }
+            
+            fetch('/api/classes', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    name: name,
+                    schedule: schedule,
+                    teacher: teacher
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    hideAddClassForm();
+                    loadClasses(); // Refresh the class lists
+                    // Clear the form
+                    document.getElementById('new-class-name').value = '';
+                    document.getElementById('new-class-schedule').value = '';
+                    document.getElementById('new-class-teacher').value = '';
+                } else {
+                    alert('Error adding class: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error adding class:', error);
+                alert('Error adding class');
+            });
+        }
+
         function startCamera(videoEl) {
             stopCamera(); // Stop any existing stream
             
@@ -370,9 +463,9 @@
         function registerStudent() {
             const name = document.getElementById('student-name').value;
             const studentId = document.getElementById('student-id').value;
-            const studentClass = document.getElementById('student-class').value;
+            const classId = document.getElementById('student-class').value;
             
-            if (!name || !studentId || !studentClass || !capturedImage) {
+            if (!name || !studentId || !classId || !capturedImage) {
                 showStatus('registration-status', 'Please fill all fields and capture a face image', true);
                 return;
             }
@@ -385,7 +478,7 @@
                 body: JSON.stringify({
                     name: name,
                     student_id: studentId,
-                    class: studentClass,
+                    class_id: classId,
                     face_sample: capturedImage
                 })
             })
@@ -517,20 +610,21 @@
             .then(data => {
                 const classSelects = [
                     document.getElementById('class-select'),
-                    document.getElementById('filter-class')
+                    document.getElementById('filter-class'),
+                    document.getElementById('student-class')
                 ];
                 
                 classSelects.forEach(select => {
                     if (!select) return;
                     
-                    // Keep the first option (All Classes)
+                    // Keep the first option (All Classes/Select Class)
                     const firstOption = select.options[0];
                     select.innerHTML = '';
                     select.appendChild(firstOption);
                     
                     data.forEach(cls => {
                         const option = document.createElement('option');
-                        option.value = cls.name;
+                        option.value = cls.id;  // Use class ID as value
                         option.textContent = cls.name;
                         select.appendChild(option);
                     });

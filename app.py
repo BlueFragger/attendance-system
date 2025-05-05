@@ -481,10 +481,20 @@ def register_student():
         data = request.json
         student_id = str(uuid.uuid4())
         
+        # Validate class exists if provided
+        class_id = data.get('class_id')
+        if class_id:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM classes WHERE id = ?", (class_id,))
+            if not cursor.fetchone():
+                return jsonify({"error": "Invalid class ID"}), 400
+            conn.close()
+        
         # Save student info first with retry logic
         execute_with_retry(
             "INSERT INTO students (id, name, student_id, class, added_date) VALUES (?, ?, ?, ?, ?)",
-            (student_id, data['name'], data['student_id'], data['class'], datetime.now().strftime("%Y-%m-%d"))
+            (student_id, data['name'], data['student_id'], class_id or data.get('class', ''), datetime.now().strftime("%Y-%m-%d"))
         )
         
         # Process face sample
@@ -502,6 +512,28 @@ def register_student():
         return jsonify({"success": True, "student_id": student_id})
     except Exception as e:
         print(f"Error registering student: {e}")
+        return jsonify({"error": str(e)}), 500
+    
+@app.route('/api/classes', methods=['POST'])
+def create_class():
+    try:
+        data = request.json
+        execute_with_retry(
+            "INSERT INTO classes (name, schedule, teacher) VALUES (?, ?, ?)",
+            (data['name'], data.get('schedule', ''), data.get('teacher', ''))
+        )
+        return jsonify({"success": True})
+    except Exception as e:
+        print(f"Error creating class: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/classes/<int:class_id>', methods=['DELETE'])
+def delete_class(class_id):
+    try:
+        execute_with_retry("DELETE FROM classes WHERE id = ?", (class_id,))
+        return jsonify({"success": True})
+    except Exception as e:
+        print(f"Error deleting class: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/students/<student_id>', methods=['DELETE'])
