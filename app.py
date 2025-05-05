@@ -409,7 +409,144 @@ def index():
 def serve_static(filename):
     return send_from_directory(os.path.join(BASE_DIR, 'static'), filename)
 
+
+
 # [All your existing API routes remain the same...]
+# Student Management
+@app.route('/api/students', methods=['GET', 'POST'])
+def manage_students():
+    if request.method == 'GET':
+        # List all students
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT s.*, GROUP_CONCAT(fs.image_path) as face_samples 
+            FROM students s
+            LEFT JOIN face_samples fs ON s.id = fs.student_id
+            GROUP BY s.id
+        """)
+        students = cursor.fetchall()
+        conn.close()
+        return jsonify([dict(student) for student in students])
+    
+    elif request.method == 'POST':
+        # Register new student
+        data = request.json
+        student_id = str(uuid.uuid4())
+        
+        # Save student info
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO students (id, name, student_id, class, added_date) VALUES (?, ?, ?, ?, ?)",
+            (student_id, data['name'], data['student_id'], data['class'], datetime.now().strftime("%Y-%m-%d"))
+        
+        # Process face sample
+        img_data = data['face_sample'].split(',')[1]  # Remove data URL prefix
+        img_bytes = base64.b64decode(img_data)
+        img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        
+        img_path, error = fr_system.add_face_sample(img, student_id)
+        if error:
+            conn.rollback()
+            conn.close()
+            return jsonify({"error": error}), 400
+            
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True, "student_id": student_id})
+
+@app.route('/api/students/<student_id>', methods=['DELETE'])
+def delete_student(student_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Get face samples to delete
+    cursor.execute("SELECT image_path FROM face_samples WHERE student_id = ?", (student_id,))
+    samples = cursor.fetchall()
+    
+    # Delete from database
+    cursor.execute("DELETE FROM face_samples WHERE student_id = ?", (student_id,))
+    cursor.execute("DELETE FROM students WHERE id = ?", (student_id,))
+    cursor.execute("DELETE FROM attendance WHERE student_id = ?", (student_id,))
+    
+    # Delete face images
+    for sample in samples:
+        img_path = os.path.join(BASE_DIR, 'static', sample[0])
+        if os.path.exists(img_path):
+            os.remove(img_path)
+    
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True})
+
+# Class Management
+@app.route('/api/classes', methods=['GET'])
+def get_classes():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM classes")
+    classes = cursor.fetchall()
+    conn.close()
+    return jsonify([dict(cls) for cls in classes])
+
+# Attendance Management
+@app.route('/api/attendance', methods=['GET'])
+def get_attendance():
+    class_filter = request.args.get('class', '')
+    date_filter = request.args.get('date', '')
+    start_date = request.args.get('start_date', '')
+    end_date = request.args.get('end_date', '')
+    
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT a.*, s.name as student_name, s.student_id, s.class 
+        FROM attendance a
+        JOIN students s ON a.student_id = s.id
+    """
+    params = []
+    
+    conditions = []
+    if class_filter:
+        conditions.append("s.class = ?")
+        params.append(class_filter)
+    if date_filter:
+        conditions.append("a.date = ?")
+        params.append(date_filter)
+    if start_date and end_date:
+        conditions.append("a.date BETWEEN ? AND ?")
+        params.extend([start_date, end_date])
+    
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    
+    query += " ORDER BY a.date DESC, a.check_in_time DESC"
+    cursor.execute(query, params)
+    attendance = cursor.fetchall()
+    conn.close()
+    return jsonify([dict(record) for record in attendance])
+
+# Face Recognition
+@app.route('/api/recognize', methods=['POST'])
+def recognize_face():
+    data = request.json
+    img_data = data['image'].split(',')[1]  # Remove data URL prefix
+    img_bytes = base64.b64decode(img_data)
+    img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+    
+    class_id = data.get('class', None)
+    result, error = fr_system.recognize_face(img, class_id)
+    
+    if error:
+        return jsonify({"error": error}), 400
+    return jsonify(result)
 
 @app.route('/api/retrain', methods=['POST'])
 def retrain_model():
