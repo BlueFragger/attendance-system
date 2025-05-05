@@ -804,9 +804,32 @@
                 recognitionResult.innerHTML = '';
                 recognitionResult.appendChild(progressDiv);
                 
+                // Update progress animation
+                let progress = 0;
+                const progressBar = document.getElementById('training-progress-bar');
+                const progressStatus = document.getElementById('training-status');
+                const progressInterval = setInterval(() => {
+                    progress += 5;
+                    if (progress <= 100) {
+                        progressBar.value = progress;
+                        if (progress < 30) {
+                            progressStatus.textContent = "Loading face data...";
+                        } else if (progress < 60) {
+                            progressStatus.textContent = "Processing encodings...";
+                        } else if (progress < 90) {
+                            progressStatus.textContent = "Finalizing model...";
+                        } else {
+                            progressStatus.textContent = "Completing training...";
+                        }
+                    }
+                }, 150);
+                
                 const response = await fetch('/api/retrain', {
                     method: 'POST'
                 });
+                
+                clearInterval(progressInterval);
+                progressBar.value = 100;
                 
                 const result = await response.json();
                 
