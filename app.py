@@ -489,6 +489,17 @@ def register_student():
 def register_student():
     try:
         data = request.json
+        
+        # Check if student with same student_id already exists
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM students WHERE student_id = ?", (data['student_id'],))
+        existing_student = cursor.fetchone()
+        conn.close()
+        
+        if existing_student:
+            return jsonify({"error": "A student with this ID already exists"}), 400
+            
         student_id = str(uuid.uuid4())
         
         # Save student info first with retry logic
