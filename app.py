@@ -464,15 +464,22 @@ def serve_static(filename):
     return send_from_directory(os.path.join(BASE_DIR, 'static'), filename)
 
 # API Routes with improved database handling
-@app.route('/api/students', methods=['GET'])
-def get_students():
+@app.route('/api/students', methods=['POST'])
+def register_student():
     try:
+        data = request.json
+        
+        # Check if student with same student_id already exists
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM students")
-        students = [dict(row) for row in cursor.fetchall()]
+        cursor.execute("SELECT id FROM students WHERE student_id = ?", (data['student_id'],))
+        existing_student = cursor.fetchone()
         conn.close()
-        return jsonify(students)
+        
+        if existing_student:
+            return jsonify({"error": "A student with this ID already exists"}), 400
+        # Continue with registration if no duplicate
+        student_id = str(uuid.uuid4())
     except Exception as e:
         print(f"Error getting students: {e}")
         return jsonify({"error": str(e)}), 500
@@ -560,8 +567,9 @@ def get_attendance():
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        # This is the problematic query that needs modification
         query = """
-            SELECT a.*, s.name as student_name, s.student_id, s.class 
+            SELECT a.*, s.name as student_name, s.student_id as enrollment_id, s.class 
             FROM attendance a
             JOIN students s ON a.student_id = s.id
         """
