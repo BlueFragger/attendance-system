@@ -413,50 +413,33 @@ def serve_static(filename):
 
 # [All your existing API routes remain the same...]
 # Student Management
-@app.route('/api/students', methods=['GET', 'POST'])
-def manage_students():
-    if request.method == 'GET':
-        # List all students
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT s.*, GROUP_CONCAT(fs.image_path) as face_samples 
-            FROM students s
-            LEFT JOIN face_samples fs ON s.id = fs.student_id
-            GROUP BY s.id
-        """)
-        students = cursor.fetchall()
-        conn.close()
-        return jsonify([dict(student) for student in students])
+@app.route('/api/students', methods=['POST'])
+def register_student():
+    data = request.json
+    student_id = str(uuid.uuid4())
     
-    elif request.method == 'POST':
-        # Register new student
-        data = request.json
-        student_id = str(uuid.uuid4())
-        
-        # Save student info
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO students (id, name, student_id, class, added_date) VALUES (?, ?, ?, ?, ?)",
-            (student_id, data['name'], data['student_id'], data['class'], datetime.now().strftime("%Y-%m-%d"))
-        
-        # Process face sample
-        img_data = data['face_sample'].split(',')[1]  # Remove data URL prefix
-        img_bytes = base64.b64decode(img_data)
-        img_array = np.frombuffer(img_bytes, dtype=np.uint8)
-        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-        
-        img_path, error = fr_system.add_face_sample(img, student_id)
-        if error:
-            conn.rollback()
-            conn.close()
-            return jsonify({"error": error}), 400
-            
-        conn.commit()
+    # Save student info
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO students (id, name, student_id, class, added_date) VALUES (?, ?, ?, ?, ?)",
+        (student_id, data['name'], data['student_id'], data['class'], datetime.now().strftime("%Y-%m-%d"))) # <-- This closing parenthesis was likely missing
+    
+    # Process face sample
+    img_data = data['face_sample'].split(',')[1]
+    img_bytes = base64.b64decode(img_data)
+    img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+    
+    img_path, error = fr_system.add_face_sample(img, student_id)
+    if error:
+        conn.rollback()
         conn.close()
-        return jsonify({"success": True, "student_id": student_id})
+        return jsonify({"error": error}), 400
+        
+    conn.commit()
+    conn.close()
+    return jsonify({"success": True, "student_id": student_id})
 
 @app.route('/api/students/<student_id>', methods=['DELETE'])
 def delete_student(student_id):
