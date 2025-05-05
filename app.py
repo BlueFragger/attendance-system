@@ -331,7 +331,7 @@ class DeepFaceRecognition:
         # Record attendance
         today = date.today().strftime("%Y-%m-%d")
         now = datetime.now().strftime("%H:%M:%S")
-        if class_id is not None and class_id.strip():
+        if class_id is not None and class_id.strip() != "":
             student_class = class_id  # Use the explicit class_id from the request
         else:
             student_class = best_match['class']  # Fall back to student's default class
@@ -597,6 +597,178 @@ def recognize_face():
     return fixed_recognize_face()
 
 # Add this to your app.py file after the recognize_face route
+# Here's the fix for the fixed_recognize_face function
+@app.route('/api/fixed_recognize', methods=['POST'])
+def fixed_recognize_face():
+    """A more memory-efficient face recognition implementation"""
+    try:
+        data = request.json
+        img_data = data['image'].split(',')[1]  # Remove data URL prefix
+        img_bytes = base64.b64decode(img_data)
+        img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        
+        class_id = data.get('class', None)
+        
+        # Step 1: Detect face in the input image
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+        )
+        
+        if len(faces) == 0:
+            return jsonify({"error": "No faces detected in image"}), 400
+        
+        # Extract the first face
+        x, y, w, h = faces[0]
+        face_img = img[y:y+h, x:x+w]
+        
+        # Step 2: Get all student face samples
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT fs.student_id, fs.image_path, 
+                   s.name, s.student_id as enrollment_id, s.class
+            FROM face_samples fs
+            JOIN students s ON fs.student_id = s.id
+        """)
+        
+        samples = cursor.fetchall()
+        conn.close()
+        
+        if not samples:
+            return jsonify({
+                "recognized": False,
+                "confidence": 0,
+                "student": None,
+                "message": "No students registered in the system"
+            })
+        
+        # Step 3: Compare with each sample using a simple method
+        best_match = None
+        best_similarity = 0
+        
+        # Prepare the face for comparison
+        face_img = cv2.resize(face_img, (100, 100))
+        face_gray = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
+        
+        # Calculate histogram for query face
+        query_hist = cv2.calcHist([face_gray], [0], None, [256], [0, 256])
+        cv2.normalize(query_hist, query_hist, 0, 1, cv2.NORM_MINMAX)
+        
+        # Process each sample
+        for sample in samples:
+            sample_path = os.path.join(BASE_DIR, 'static', sample['image_path'])
+            
+            if not os.path.exists(sample_path):
+                continue
+                
+            try:
+                # Load sample image
+                sample_img = cv2.imread(sample_path)
+                if sample_img is None:
+                    continue
+                
+                # Find face in sample image
+                sample_gray = cv2.cvtColor(sample_img, cv2.COLOR_BGR2GRAY)
+                sample_faces = face_cascade.detectMultiScale(
+                    sample_gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+                )
+                
+                if len(sample_faces) == 0:
+                    # If no face detected, use the whole image
+                    sample_img_resized = cv2.resize(sample_img, (100, 100))
+                    sample_gray_resized = cv2.cvtColor(sample_img_resized, cv2.COLOR_BGR2GRAY)
+                else:
+                    # Use the first face
+                    sx, sy, sw, sh = sample_faces[0]
+                    sample_face = sample_img[sy:sy+sh, sx:sx+sw]
+                    sample_img_resized = cv2.resize(sample_face, (100, 100))
+                    sample_gray_resized = cv2.cvtColor(sample_img_resized, cv2.COLOR_BGR2GRAY)
+                
+                # Calculate histogram for sample face
+                sample_hist = cv2.calcHist([sample_gray_resized], [0], None, [256], [0, 256])
+                cv2.normalize(sample_hist, sample_hist, 0, 1, cv2.NORM_MINMAX)
+                
+                # Compare histograms
+                similarity = cv2.compareHist(query_hist, sample_hist, cv2.HISTCMP_CORREL)
+                
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_match = dict(sample)
+            except Exception as e:
+                print(f"Error comparing with sample {sample['image_path']}: {e}")
+                continue
+        
+        # If no good match found
+        if best_match is None or best_similarity < 0.5:  # Adjust threshold as needed
+            return jsonify({
+                "recognized": False,
+                "confidence": best_similarity * 100 if best_match else 0,
+                "student": None
+            })
+        
+        # Step 4: Record attendance
+        today = date.today().strftime("%Y-%m-%d")
+        now = datetime.now().strftime("%H:%M:%S")
+        
+        # FIX HERE: Properly handle class_id
+        # If class_id is None, empty string, "All Classes", or "all" (case insensitive), use student's default class
+        if class_id is None or class_id.strip() == "" or class_id.lower().strip() in ["all classes", "all"]:
+            student_class = best_match['class']  # Use student's registered class
+        else:
+            student_class = class_id  # Use the explicitly selected class
+        
+        try:
+            # Check if attendance already recorded today
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id FROM attendance 
+                WHERE student_id = ? AND date = ? AND class = ?
+            """, (best_match['student_id'], today, student_class))
+            
+            if cursor.fetchone() is None:
+                # Record new attendance with retry logic
+                execute_with_retry("""
+                    INSERT INTO attendance (student_id, check_in_time, date, class)
+                    VALUES (?, ?, ?, ?)
+                """, (best_match['student_id'], now, today, student_class))
+                attendance_recorded = True
+            else:
+                attendance_recorded = False
+                
+            conn.close()
+        except Exception as e:
+            print(f"Error recording attendance: {e}")
+            attendance_recorded = False
+        
+        # Format response
+        student_info = {
+            "id": best_match['student_id'],
+            "name": best_match['name'],
+            "student_id": best_match['enrollment_id'],
+            "class": best_match['class'],
+            "image": best_match['image_path']
+        }
+        
+        return jsonify({
+            "recognized": True,
+            "confidence": best_similarity * 100,
+            "student": student_info,
+            "attendance_recorded": attendance_recorded,
+            "date": today,
+            "time": now,
+            "recorded_class": student_class  # Added for debugging purposes
+        })
+        
+    except Exception as e:
+        print(f"Error in fixed_recognize_face: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Also fix the debug_recognize_face function with similar logic
 @app.route('/api/debug_recognize', methods=['POST'])
 def debug_recognize_face():
     """Debug version of recognize_face with better error handling and logging"""
@@ -721,10 +893,16 @@ def debug_recognize_face():
             
             # Record attendance
             class_id = data.get('class', None)
-            if class_id is not None and class_id.strip():
-                student_class = class_id  # Use the explicit class_id from the request
+            
+            # FIX HERE: Properly handle class_id
+            # If class_id is None, empty string, "All Classes", or "all" (case insensitive), use student's default class
+            if class_id is None or class_id.strip() == "" or class_id.lower().strip() in ["all classes", "all"]:
+                student_class = best_match['class']  # Use student's registered class
             else:
-                student_class = best_match['class']  # Fall back to student's default class
+                student_class = class_id  # Use the explicitly selected class
+            
+            response["debug_info"]["class_value"] = class_id
+            response["debug_info"]["student_class"] = student_class
 
             today = date.today().strftime("%Y-%m-%d")
             now = datetime.now().strftime("%H:%M:%S")
@@ -764,6 +942,7 @@ def debug_recognize_face():
                 "attendance_recorded": attendance_recorded,
                 "date": today,
                 "time": now,
+                "recorded_class": student_class,  # Added for debugging
                 "debug_info": response["debug_info"]
             }
             
@@ -818,10 +997,17 @@ def debug_recognize_face():
                     
                     # Record attendance
                     class_id = data.get('class', None)
-                    if class_id is not None and class_id.strip():
-                        student_class = class_id  # Use the explicit class_id from the request
+                    
+                    # FIX HERE: Properly handle class_id
+                    # If class_id is None, empty string, "All Classes", or "all" (case insensitive), use student's default class
+                    if class_id is None or class_id.strip() == "" or class_id.lower().strip() in ["all classes", "all"]:
+                        student_class = best_match['class']  # Use student's registered class
                     else:
-                        student_class = best_match['class']  # Fall back to student's default class
+                        student_class = class_id  # Use the explicitly selected class
+                        
+                    response["debug_info"]["class_value"] = class_id
+                    response["debug_info"]["student_class"] = student_class
+                    
                     today = date.today().strftime("%Y-%m-%d")
                     now = datetime.now().strftime("%H:%M:%S")
                     
@@ -860,6 +1046,7 @@ def debug_recognize_face():
                         "attendance_recorded": attendance_recorded,
                         "date": today,
                         "time": now,
+                        "recorded_class": student_class,  # Added for debugging
                         "debug_info": response["debug_info"]
                     }
                     
@@ -902,171 +1089,7 @@ def debug_recognize_face():
         # Clean up temp image
         if 'temp_img_path' in response["debug_info"] and os.path.exists(response["debug_info"]["temp_img_path"]):
             os.remove(response["debug_info"]["temp_img_path"])
-
-# New implementation of recognize_face that doesn't use DeepFace's verify function directly
-@app.route('/api/fixed_recognize', methods=['POST'])
-def fixed_recognize_face():
-    """A more memory-efficient face recognition implementation"""
-    try:
-        data = request.json
-        img_data = data['image'].split(',')[1]  # Remove data URL prefix
-        img_bytes = base64.b64decode(img_data)
-        img_array = np.frombuffer(img_bytes, dtype=np.uint8)
-        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-        
-        class_id = data.get('class', None)
-        
-        # Step 1: Detect face in the input image
-        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-        )
-        
-        if len(faces) == 0:
-            return jsonify({"error": "No faces detected in image"}), 400
-        
-        # Extract the first face
-        x, y, w, h = faces[0]
-        face_img = img[y:y+h, x:x+w]
-        
-        # Step 2: Get all student face samples
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT fs.student_id, fs.image_path, 
-                   s.name, s.student_id as enrollment_id, s.class
-            FROM face_samples fs
-            JOIN students s ON fs.student_id = s.id
-        """)
-        
-        samples = cursor.fetchall()
-        conn.close()
-        
-        if not samples:
-            return jsonify({
-                "recognized": False,
-                "confidence": 0,
-                "student": None,
-                "message": "No students registered in the system"
-            })
-        
-        # Step 3: Compare with each sample using a simple method
-        best_match = None
-        best_similarity = 0
-        
-        # Prepare the face for comparison
-        face_img = cv2.resize(face_img, (100, 100))
-        face_gray = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
-        
-        # Calculate histogram for query face
-        query_hist = cv2.calcHist([face_gray], [0], None, [256], [0, 256])
-        cv2.normalize(query_hist, query_hist, 0, 1, cv2.NORM_MINMAX)
-        
-        # Process each sample
-        for sample in samples:
-            sample_path = os.path.join(BASE_DIR, 'static', sample['image_path'])
             
-            if not os.path.exists(sample_path):
-                continue
-                
-            try:
-                # Load sample image
-                sample_img = cv2.imread(sample_path)
-                if sample_img is None:
-                    continue
-                
-                # Find face in sample image
-                sample_gray = cv2.cvtColor(sample_img, cv2.COLOR_BGR2GRAY)
-                sample_faces = face_cascade.detectMultiScale(
-                    sample_gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-                )
-                
-                if len(sample_faces) == 0:
-                    # If no face detected, use the whole image
-                    sample_img_resized = cv2.resize(sample_img, (100, 100))
-                    sample_gray_resized = cv2.cvtColor(sample_img_resized, cv2.COLOR_BGR2GRAY)
-                else:
-                    # Use the first face
-                    sx, sy, sw, sh = sample_faces[0]
-                    sample_face = sample_img[sy:sy+sh, sx:sx+sw]
-                    sample_img_resized = cv2.resize(sample_face, (100, 100))
-                    sample_gray_resized = cv2.cvtColor(sample_img_resized, cv2.COLOR_BGR2GRAY)
-                
-                # Calculate histogram for sample face
-                sample_hist = cv2.calcHist([sample_gray_resized], [0], None, [256], [0, 256])
-                cv2.normalize(sample_hist, sample_hist, 0, 1, cv2.NORM_MINMAX)
-                
-                # Compare histograms
-                similarity = cv2.compareHist(query_hist, sample_hist, cv2.HISTCMP_CORREL)
-                
-                if similarity > best_similarity:
-                    best_similarity = similarity
-                    best_match = dict(sample)
-            except Exception as e:
-                print(f"Error comparing with sample {sample['image_path']}: {e}")
-                continue
-        
-        # If no good match found
-        if best_match is None or best_similarity < 0.5:  # Adjust threshold as needed
-            return jsonify({
-                "recognized": False,
-                "confidence": best_similarity * 100 if best_match else 0,
-                "student": None
-            })
-        
-        # Step 4: Record attendance
-        today = date.today().strftime("%Y-%m-%d")
-        now = datetime.now().strftime("%H:%M:%S")
-        student_class = best_match['class'] if class_id is None else class_id
-        
-        try:
-            # Check if attendance already recorded today
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id FROM attendance 
-                WHERE student_id = ? AND date = ? AND class = ?
-            """, (best_match['student_id'], today, student_class))
-            
-            if cursor.fetchone() is None:
-                # Record new attendance with retry logic
-                execute_with_retry("""
-                    INSERT INTO attendance (student_id, check_in_time, date, class)
-                    VALUES (?, ?, ?, ?)
-                """, (best_match['student_id'], now, today, student_class))
-                attendance_recorded = True
-            else:
-                attendance_recorded = False
-                
-            conn.close()
-        except Exception as e:
-            print(f"Error recording attendance: {e}")
-            attendance_recorded = False
-        
-        # Format response
-        student_info = {
-            "id": best_match['student_id'],
-            "name": best_match['name'],
-            "student_id": best_match['enrollment_id'],
-            "class": best_match['class'],
-            "image": best_match['image_path']
-        }
-        
-        return jsonify({
-            "recognized": True,
-            "confidence": best_similarity * 100,
-            "student": student_info,
-            "attendance_recorded": attendance_recorded,
-            "date": today,
-            "time": now
-        })
-        
-    except Exception as e:
-        print(f"Error in fixed_recognize_face: {e}")
-        return jsonify({"error": str(e)}), 500
-
 @app.route('/api/retrain', methods=['POST'])
 def retrain_model():
     """Retrain model or update recognition parameters"""
