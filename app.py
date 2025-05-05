@@ -750,7 +750,7 @@ def debug_recognize_face():
             
             # Record attendance
             class_id = data.get('class', None)
-            student_class = best_match['class'] if class_id is None else class_id
+            student_class = class_id if class_id else best_match['class']
             today = date.today().strftime("%Y-%m-%d")
             now = datetime.now().strftime("%H:%M:%S")
             
