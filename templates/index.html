@@ -3,1361 +3,567 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DeepSeek Facial Attendance System</title>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <title>Facial Recognition Attendance System</title>
     <style>
-        .loader {
-            border-top-color: #4f46e5;
-            -webkit-animation: spinner 1.5s linear infinite;
-            animation: spinner 1.5s linear infinite;
+        /* Basic CSS to keep things lightweight */
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+            background-color: #f5f5f5;
         }
-        
-        @-webkit-keyframes spinner {
-            0% { -webkit-transform: rotate(0deg); }
-            100% { -webkit-transform: rotate(360deg); }
-        }
-        
-        @keyframes spinner {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        .webcam-container {
-            position: relative;
-            width: 100%;
-            max-width: 640px;
+        .container {
+            max-width: 1000px;
             margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         }
-        
-        #video-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            border: 2px dashed #4f46e5;
-            box-sizing: border-box;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+        h1, h2, h3 {
+            color: #2c3e50;
         }
-        
-        .recognition-animation {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            border: 2px solid #10b981;
-            animation: pulse 1.5s infinite;
-            opacity: 0;
+        .tab {
+            display: none;
         }
-        
-        @keyframes pulse {
-            0% {
-                transform: scale(0.95);
-                opacity: 0.7;
-            }
-            
-            70% {
-                transform: scale(1);
-                opacity: 0.2;
-            }
-            
-            100% {
-                transform: scale(0.95);
-                opacity: 0.7;
-            }
+        .tab.active {
+            display: block;
         }
-        
-        .tab-active {
-            background-color: #4f46e5;
+        .tab-buttons {
+            margin-bottom: 20px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 10px;
+        }
+        .tab-button {
+            background: #f8f8f8;
+            border: 1px solid #ddd;
+            padding: 8px 15px;
+            margin-right: 5px;
+            cursor: pointer;
+            border-radius: 3px 3px 0 0;
+        }
+        .tab-button.active {
+            background: #2c3e50;
             color: white;
+            border-color: #2c3e50;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #2c3e50;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #1a252f;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        th, td {
+            padding: 10px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        th {
+            background: #f8f8f8;
+        }
+        .video-container {
+            margin: 20px 0;
+            text-align: center;
+        }
+        #video {
+            border: 1px solid #ddd;
+            max-width: 100%;
+            height: auto;
+        }
+        #canvas {
+            display: none;
+        }
+        .student-info {
+            margin-top: 15px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            background: #f8f8f8;
+        }
+        .hidden {
+            display: none;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 3px;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
         }
     </style>
 </head>
-<body class="bg-gray-100 min-h-screen">
-    <header class="bg-indigo-600 text-white p-4 shadow-md">
-        <div class="container mx-auto flex justify-between items-center">
-            <h1 class="text-2xl font-bold">DeepSeek Facial Attendance System</h1>
-            <div class="flex items-center space-x-4">
-                <button id="settings-btn" class="px-4 py-2 bg-indigo-800 rounded hover:bg-indigo-700 transition">
-                    <i class="fas fa-cog mr-2"></i>Settings
-                </button>
-            </div>
+<body>
+    <div class="container">
+        <h1>Facial Recognition Attendance System</h1>
+        
+        <div class="tab-buttons">
+            <button class="tab-button active" onclick="showTab('tab-recognize')">Take Attendance</button>
+            <button class="tab-button" onclick="showTab('tab-register')">Register Student</button>
+            <button class="tab-button" onclick="showTab('tab-attendance')">View Attendance</button>
+            <button class="tab-button" onclick="showTab('tab-students')">Manage Students</button>
         </div>
-    </header>
-
-    <main class="container mx-auto py-8 px-4">
-        <!-- Tabs Navigation -->
-        <div class="flex justify-center mb-8">
-            <div class="inline-flex rounded-md shadow-sm">
-                <button id="tab-attendance" class="tab-active px-6 py-3 text-lg font-medium rounded-l-lg">
-                    <i class="fas fa-user-check mr-2"></i>Take Attendance
-                </button>
-                <button id="tab-register" class="px-6 py-3 text-lg font-medium bg-white hover:bg-gray-200 transition">
-                    <i class="fas fa-user-plus mr-2"></i>Register Student
-                </button>
-                <button id="tab-reports" class="px-6 py-3 text-lg font-medium bg-white hover:bg-gray-200 transition rounded-r-lg">
-                    <i class="fas fa-chart-bar mr-2"></i>Attendance Reports
-                </button>
-            </div>
-        </div>
-
+        
         <!-- Take Attendance Tab -->
-        <div id="attendance-section" class="bg-white p-6 rounded-lg shadow-md">
-            <div class="mb-6">
-                <h2 class="text-xl font-semibold mb-4">Take Attendance</h2>
-                <div class="flex flex-col md:flex-row gap-4 mb-4">
-                    <div class="w-full md:w-1/3">
-                        <label class="block text-gray-700 mb-2">Select Class:</label>
-                        <select id="attendance-class" class="w-full p-2 border border-gray-300 rounded">
-                            <option value="">Loading classes...</option>
-                        </select>
-                    </div>
-                    <div class="w-full md:w-1/3">
-                        <label class="block text-gray-700 mb-2">Camera Source:</label>
-                        <select id="camera-select" class="w-full p-2 border border-gray-300 rounded">
-                            <option value="">Loading cameras...</option>
-                        </select>
-                    </div>
-                    <div class="w-full md:w-1/3 flex items-end">
-                        <button id="toggle-camera" class="w-full p-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition">
-                            <i class="fas fa-video mr-2"></i>Start Camera
-                        </button>
-                    </div>
-                </div>
+        <div id="tab-recognize" class="tab active">
+            <h2>Take Attendance</h2>
+            <div class="video-container">
+                <video id="video" width="400" height="300" autoplay></video>
+                <canvas id="canvas" width="400" height="300"></canvas>
             </div>
-
-            <div class="flex flex-col md:flex-row gap-8">
-                <div class="w-full md:w-1/2">
-                    <div class="webcam-container">
-                        <video id="webcam" autoplay playsinline class="w-full rounded-lg shadow-md"></video>
-                        <div id="video-overlay" class="hidden"></div>
-                    </div>
-                    <div class="mt-4 flex justify-center">
-                        <button id="take-attendance" class="px-6 py-3 bg-green-600 text-white rounded-lg shadow hover:bg-green-700 transition disabled:opacity-50" disabled>
-                            <i class="fas fa-camera mr-2"></i>Recognize Face
-                        </button>
-                    </div>
-                </div>
-
-                <div class="w-full md:w-1/2">
-                    <div id="recognition-result" class="p-4 rounded-lg border-2 border-dashed border-gray-300 h-full min-h-[300px] flex items-center justify-center text-gray-500">
-                        <div class="text-center">
-                            <i class="fas fa-user-circle text-5xl mb-3"></i>
-                            <p>Recognition results will appear here</p>
-                        </div>
-                    </div>
-                </div>
+            <div class="form-group">
+                <label for="class-select">Class</label>
+                <select id="class-select">
+                    <option value="">All Classes</option>
+                    <!-- Classes will be loaded dynamically -->
+                </select>
             </div>
-
-            <div class="mt-8">
-                <h3 class="text-lg font-semibold mb-4">Today's Attendance</h3>
-                <div class="overflow-x-auto">
-                    <table class="min-w-full bg-white border border-gray-200">
-                        <thead>
-                            <tr class="bg-gray-100">
-                                <th class="py-2 px-4 border-b border-gray-200 text-left">Name</th>
-                                <th class="py-2 px-4 border-b border-gray-200 text-left">Student ID</th>
-                                <th class="py-2 px-4 border-b border-gray-200 text-left">Class</th>
-                                <th class="py-2 px-4 border-b border-gray-200 text-left">Check-in Time</th>
-                            </tr>
-                        </thead>
-                        <tbody id="attendance-table">
-                            <tr>
-                                <td colspan="4" class="py-4 text-center text-gray-500">No attendance records for today</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
+            <button id="capture-btn">Capture & Recognize</button>
+            <div id="recognition-status" class="status hidden"></div>
+            <div id="student-info" class="student-info hidden">
+                <h3>Student Information</h3>
+                <div id="student-details"></div>
             </div>
         </div>
-
+        
         <!-- Register Student Tab -->
-        <div id="register-section" class="bg-white p-6 rounded-lg shadow-md hidden">
-            <h2 class="text-xl font-semibold mb-6">Register New Student</h2>
-            
-            <form id="register-form" class="mb-8">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                    <div>
-                        <label class="block text-gray-700 mb-2" for="student-name">Full Name:</label>
-                        <input type="text" id="student-name" class="w-full p-2 border border-gray-300 rounded" required>
-                    </div>
-                    <div>
-                        <label class="block text-gray-700 mb-2" for="student-id">Student ID:</label>
-                        <input type="text" id="student-id" class="w-full p-2 border border-gray-300 rounded" required>
-                    </div>
-                    <div>
-                        <label class="block text-gray-700 mb-2" for="student-class">Class:</label>
-                        <select id="student-class" class="w-full p-2 border border-gray-300 rounded" required>
-                            <option value="">Select Class</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-gray-700 mb-2">Face Sample:</label>
-                        <div class="flex items-center">
-                            <button type="button" id="capture-sample" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition">
-                                <i class="fas fa-camera mr-2"></i>Capture
-                            </button>
-                            <span class="ml-2 text-sm text-gray-600">or</span>
-                            <label class="ml-2 px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition cursor-pointer">
-                                <i class="fas fa-upload mr-2"></i>Upload
-                                <input type="file" id="upload-sample" class="hidden" accept="image/*">
-                            </label>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="flex flex-col md:flex-row gap-8">
-                    <div class="w-full md:w-1/2">
-                        <div class="webcam-container mb-4">
-                            <video id="register-webcam" autoplay playsinline class="w-full rounded-lg shadow-md"></video>
-                        </div>
-                        <div class="flex justify-center">
-                            <button type="button" id="toggle-register-camera" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition">
-                                <i class="fas fa-video mr-2"></i>Start Camera
-                            </button>
-                        </div>
-                    </div>
-                    <div class="w-full md:w-1/2">
-                        <div id="sample-preview" class="w-full h-64 bg-gray-100 rounded-lg flex items-center justify-center">
-                            <p class="text-gray-500">No face sample captured</p>
-                        </div>
-                        <div class="mt-4 flex justify-end">
-                            <button type="submit" id="submit-registration" class="px-6 py-3 bg-green-600 text-white rounded-lg shadow hover:bg-green-700 transition" disabled>
-                                <i class="fas fa-save mr-2"></i>Register Student
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </form>
-
-            <div class="mt-8">
-                <h3 class="text-lg font-semibold mb-4">Registered Students</h3>
-                <div class="overflow-x-auto">
-                    <table class="min-w-full bg-white border border-gray-200">
-                        <thead>
-                            <tr class="bg-gray-100">
-                                <th class="py-2 px-4 border-b border-gray-200 text-left">Photo</th>
-                                <th class="py-2 px-4 border-b border-gray-200 text-left">Name</th>
-                                <th class="py-2 px-4 border-b border-gray-200 text-left">Student ID</th>
-                                <th class="py-2 px-4 border-b border-gray-200 text-left">Class</th>
-                                <th class="py-2 px-4 border-b border-gray-200 text-left">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="students-table">
-                            <tr>
-                                <td colspan="5" class="py-4 text-center text-gray-500">No students registered</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
+        <div id="tab-register" class="tab">
+            <h2>Register New Student</h2>
+            <div class="form-group">
+                <label for="student-name">Name</label>
+                <input type="text" id="student-name" placeholder="Full Name">
             </div>
+            <div class="form-group">
+                <label for="student-id">Student ID</label>
+                <input type="text" id="student-id" placeholder="Enrollment Number">
+            </div>
+            <div class="form-group">
+                <label for="student-class">Class</label>
+                <input type="text" id="student-class" placeholder="Class/Section">
+            </div>
+            <div class="video-container">
+                <video id="reg-video" width="400" height="300" autoplay></video>
+                <canvas id="reg-canvas" width="400" height="300"></canvas>
+            </div>
+            <button id="capture-face-btn">Capture Face</button>
+            <div id="captured-face" class="hidden">
+                <p>Face captured successfully!</p>
+                <button id="register-btn">Register Student</button>
+            </div>
+            <div id="registration-status" class="status hidden"></div>
         </div>
-
-        <!-- Reports Tab -->
-        <div id="reports-section" class="bg-white p-6 rounded-lg shadow-md hidden">
-            <h2 class="text-xl font-semibold mb-6">Attendance Reports</h2>
-            
-            <div class="flex flex-col md:flex-row gap-4 mb-6">
-                <div class="w-full md:w-1/3">
-                    <label class="block text-gray-700 mb-2">Class:</label>
-                    <select id="report-class" class="w-full p-2 border border-gray-300 rounded">
-                        <option value="">All Classes</option>
-                    </select>
-                </div>
-                <div class="w-full md:w-1/3">
-                    <label class="block text-gray-700 mb-2">Date Range:</label>
-                    <div class="flex gap-2">
-                        <input type="date" id="date-start" class="w-1/2 p-2 border border-gray-300 rounded">
-                        <input type="date" id="date-end" class="w-1/2 p-2 border border-gray-300 rounded">
-                    </div>
-                </div>
-                <div class="w-full md:w-1/3 flex items-end">
-                    <button id="generate-report" class="w-full p-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition">
-                        <i class="fas fa-search mr-2"></i>Generate Report
-                    </button>
-                </div>
+        
+        <!-- View Attendance Tab -->
+        <div id="tab-attendance" class="tab">
+            <h2>Attendance Records</h2>
+            <div class="form-group">
+                <label for="filter-class">Filter by Class</label>
+                <select id="filter-class">
+                    <option value="">All Classes</option>
+                    <!-- Classes will be loaded dynamically -->
+                </select>
             </div>
-
-            <div class="overflow-x-auto mt-6">
-                <table class="min-w-full bg-white border border-gray-200">
+            <div class="form-group">
+                <label for="filter-date">Filter by Date</label>
+                <input type="date" id="filter-date">
+            </div>
+            <button id="filter-btn">Apply Filter</button>
+            <div class="table-container">
+                <table id="attendance-table">
                     <thead>
-                        <tr class="bg-gray-100">
-                            <th class="py-2 px-4 border-b border-gray-200 text-left">Name</th>
-                            <th class="py-2 px-4 border-b border-gray-200 text-left">Student ID</th>
-                            <th class="py-2 px-4 border-b border-gray-200 text-left">Class</th>
-                            <th class="py-2 px-4 border-b border-gray-200 text-left">Date</th>
-                            <th class="py-2 px-4 border-b border-gray-200 text-left">Check-in Time</th>
+                        <tr>
+                            <th>Name</th>
+                            <th>Student ID</th>
+                            <th>Class</th>
+                            <th>Date</th>
+                            <th>Time</th>
                         </tr>
                     </thead>
-                    <tbody id="report-table">
-                        <tr>
-                            <td colspan="5" class="py-4 text-center text-gray-500">Generate a report to see attendance data</td>
-                        </tr>
+                    <tbody id="attendance-data">
+                        <!-- Attendance data will be loaded dynamically -->
                     </tbody>
                 </table>
             </div>
-
-            <div class="mt-4 text-right">
-                <button id="export-csv" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition">
-                    <i class="fas fa-file-csv mr-2"></i>Export to CSV
-                </button>
-                <button id="print-report" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition ml-2">
-                    <i class="fas fa-print mr-2"></i>Print Report
-                </button>
-            </div>
         </div>
-    </main>
-
-    <!-- Settings Modal -->
-    <div id="settings-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center hidden">
-        <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="text-xl font-semibold">System Settings</h3>
-                <button id="close-settings" class="text-gray-500 hover:text-gray-700">
-                    <i class="fas fa-times"></i>
-                </button>
+        
+        <!-- Manage Students Tab -->
+        <div id="tab-students" class="tab">
+            <h2>Manage Students</h2>
+            <div class="table-container">
+                <table id="students-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Student ID</th>
+                            <th>Class</th>
+                            <th>Added Date</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="students-data">
+                        <!-- Students data will be loaded dynamically -->
+                    </tbody>
+                </table>
             </div>
-            
-            <form id="settings-form">
-                <div class="mb-4">
-                    <label class="block text-gray-700 mb-2">Recognition Model:</label>
-                    <select id="model-name" class="w-full p-2 border border-gray-300 rounded">
-                        <option value="VGG-Face">VGG-Face (Default)</option>
-                        <option value="Facenet">Facenet</option>
-                        <option value="Facenet512">Facenet512</option>
-                        <option value="OpenFace">OpenFace</option>
-                        <option value="DeepFace">DeepFace</option>
-                        <option value="ArcFace">ArcFace</option>
-                    </select>
-                </div>
-                
-                <div class="mb-4">
-                    <label class="block text-gray-700 mb-2">Recognition Threshold (Lower is stricter):</label>
-                    <input type="range" id="threshold" min="0.1" max="0.9" step="0.05" value="0.4" class="w-full">
-                    <div class="flex justify-between text-xs text-gray-500">
-                        <span>Strict (0.1)</span>
-                        <span id="threshold-value">0.4</span>
-                        <span>Lenient (0.9)</span>
-                    </div>
-                </div>
-                
-                <div class="mb-4">
-                    <label class="block text-gray-700 mb-2">Face Detector:</label>
-                    <select id="detector-backend" class="w-full p-2 border border-gray-300 rounded">
-                        <option value="opencv">OpenCV (Fast)</option>
-                        <option value="mtcnn">MTCNN (Accurate)</option>
-                        <option value="ssd">SSD</option>
-                        <option value="retinaface">RetinaFace</option>
-                    </select>
-                </div>
-                
-                <div class="flex justify-end mt-6">
-                    <button type="button" id="reset-settings" class="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition mr-2">
-                        Reset to Default
-                    </button>
-                    <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition">
-                        Save Settings
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Loading Overlay -->
-    <div id="loading-overlay" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center hidden">
-        <div class="bg-white p-5 rounded-lg flex items-center">
-            <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12 mr-4"></div>
-            <p id="loading-message" class="text-xl">Processing...</p>
-        </div>
-    </div>
-
-    <!-- Notification Toast -->
-    <div id="toast" class="fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg transform transition-all duration-300 translate-y-[-100vh]">
-        <div class="flex items-center">
-            <div id="toast-icon-success" class="hidden">
-                <i class="fas fa-check-circle text-green-500 text-xl mr-3"></i>
-            </div>
-            <div id="toast-icon-error" class="hidden">
-                <i class="fas fa-exclamation-circle text-red-500 text-xl mr-3"></i>
-            </div>
-            <div id="toast-icon-info" class="hidden">
-                <i class="fas fa-info-circle text-blue-500 text-xl mr-3"></i>
-            </div>
-            <div id="toast-icon-warning" class="hidden">
-                <i class="fas fa-exclamation-triangle text-yellow-500 text-xl mr-3"></i>
-            </div>
-            <p id="toast-message"></p>
         </div>
     </div>
 
     <script>
-// Global variables
-let stream = null;
-let registerStream = null;
-let videoElement = document.getElementById('webcam');
-let registerVideoElement = document.getElementById('register-webcam');
-let capturedSample = null;
-let reportData = [];
-
-// Initialize application
-document.addEventListener('DOMContentLoaded', function() {
-    // Initialize tab navigation
-    setupTabs();
-    
-    // Initialize camera functionality
-    initCameraSelect();
-    setupCameraButtons();
-    
-    // Initialize form submissions
-    setupForms();
-    
-    // Load initial data
-    loadClasses();
-    loadStudents();
-    loadTodayAttendance();
-    
-    // Initialize settings
-    setupSettings();
-    
-    // Initialize date inputs for reports with default values
-    const today = new Date();
-    const lastMonth = new Date();
-    lastMonth.setMonth(today.getMonth() - 1);
-    
-    document.getElementById('date-end').valueAsDate = today;
-    document.getElementById('date-start').valueAsDate = lastMonth;
-    
-    // Setup report generation
-    document.getElementById('generate-report').addEventListener('click', generateReport);
-    document.getElementById('export-csv').addEventListener('click', exportReportToCsv);
-    document.getElementById('print-report').addEventListener('click', printReport);
-    
-    // Setup face recognition button
-    document.getElementById('take-attendance').addEventListener('click', takeAttendance);
-    
-    // Setup settings modal
-    document.getElementById('settings-btn').addEventListener('click', function() {
-        document.getElementById('settings-modal').classList.remove('hidden');
-    });
-    
-    document.getElementById('close-settings').addEventListener('click', function() {
-        document.getElementById('settings-modal').classList.add('hidden');
-    });
-    
-    // Update threshold value display
-    document.getElementById('threshold').addEventListener('input', function() {
-        document.getElementById('threshold-value').textContent = this.value;
-    });
-});
-
-// Tab Navigation
-function setupTabs() {
-    const tabButtons = ['tab-attendance', 'tab-register', 'tab-reports'];
-    const sections = ['attendance-section', 'register-section', 'reports-section'];
-    
-    tabButtons.forEach((btnId, index) => {
-        document.getElementById(btnId).addEventListener('click', () => {
-            // Update button styles
-            tabButtons.forEach(id => {
-                document.getElementById(id).classList.remove('tab-active');
-                document.getElementById(id).classList.add('bg-white', 'hover:bg-gray-200');
+        // Global variables
+        let capturedImage = null;
+        let videoStream = null;
+        
+        // DOM Elements
+        const videoElement = document.getElementById('video');
+        const canvasElement = document.getElementById('canvas');
+        const regVideoElement = document.getElementById('reg-video');
+        const regCanvasElement = document.getElementById('reg-canvas');
+        
+        // Helper Functions
+        function showTab(tabId) {
+            // Hide all tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
             });
-            document.getElementById(btnId).classList.add('tab-active');
-            document.getElementById(btnId).classList.remove('bg-white', 'hover:bg-gray-200');
             
-            // Show/hide sections
-            sections.forEach(id => {
-                document.getElementById(id).classList.add('hidden');
+            // Deactivate all buttons
+            document.querySelectorAll('.tab-button').forEach(button => {
+                button.classList.remove('active');
             });
-            document.getElementById(sections[index]).classList.remove('hidden');
             
-            // Stop cameras when switching tabs
-            if (btnId !== 'tab-attendance' && stream) {
-                stopCamera();
-                document.getElementById('toggle-camera').innerHTML = '<i class="fas fa-video mr-2"></i>Start Camera';
-                document.getElementById('take-attendance').disabled = true;
-            }
+            // Show selected tab
+            document.getElementById(tabId).classList.add('active');
             
-            if (btnId !== 'tab-register' && registerStream) {
-                stopRegisterCamera();
-                document.getElementById('toggle-register-camera').innerHTML = '<i class="fas fa-video mr-2"></i>Start Camera';
-            }
-        });
-    });
-}
-
-// Camera Management
-async function initCameraSelect() {
-    try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(device => device.kind === 'videoinput');
-        
-        const cameraSelect = document.getElementById('camera-select');
-        cameraSelect.innerHTML = '';
-        
-        if (videoDevices.length === 0) {
-            cameraSelect.innerHTML = '<option value="">No cameras found</option>';
-            return;
-        }
-        
-        videoDevices.forEach(device => {
-            const option = document.createElement('option');
-            option.value = device.deviceId;
-            option.text = device.label || `Camera ${cameraSelect.options.length + 1}`;
-            cameraSelect.appendChild(option);
-        });
-    } catch (error) {
-        showToast('Error accessing cameras: ' + error.message, 'error');
-    }
-}
-
-function setupCameraButtons() {
-    // Main camera toggle
-    document.getElementById('toggle-camera').addEventListener('click', async function() {
-        if (stream) {
-            stopCamera();
-            this.innerHTML = '<i class="fas fa-video mr-2"></i>Start Camera';
-            document.getElementById('take-attendance').disabled = true;
-        } else {
-            const cameraId = document.getElementById('camera-select').value;
-            await startCamera(cameraId);
-            if (stream) {
-                this.innerHTML = '<i class="fas fa-video-slash mr-2"></i>Stop Camera';
-                document.getElementById('take-attendance').disabled = false;
-            }
-        }
-    });
-    
-    // Registration camera toggle
-    document.getElementById('toggle-register-camera').addEventListener('click', async function() {
-        if (registerStream) {
-            stopRegisterCamera();
-            this.innerHTML = '<i class="fas fa-video mr-2"></i>Start Camera';
-        } else {
-            await startRegisterCamera();
-            if (registerStream) {
-                this.innerHTML = '<i class="fas fa-video-slash mr-2"></i>Stop Camera';
-            }
-        }
-    });
-    
-    // Capture sample button
-    document.getElementById('capture-sample').addEventListener('click', captureFaceSample);
-    
-    // File upload
-    document.getElementById('upload-sample').addEventListener('change', handleFileUpload);
-}
-
-async function startCamera(deviceId = null) {
-    try {
-        const constraints = {
-            video: deviceId ? { deviceId: { exact: deviceId } } : true,
-            audio: false
-        };
-        
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        videoElement.srcObject = stream;
-        document.getElementById('video-overlay').classList.remove('hidden');
-        showToast('Camera started successfully', 'success');
-        return true;
-    } catch (error) {
-        showToast('Error starting camera: ' + error.message, 'error');
-        return false;
-    }
-}
-
-function stopCamera() {
-    if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        stream = null;
-        videoElement.srcObject = null;
-        document.getElementById('video-overlay').classList.add('hidden');
-    }
-}
-
-async function startRegisterCamera() {
-    try {
-        registerStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        registerVideoElement.srcObject = registerStream;
-        return true;
-    } catch (error) {
-        showToast('Error starting camera: ' + error.message, 'error');
-        return false;
-    }
-}
-
-function stopRegisterCamera() {
-    if (registerStream) {
-        registerStream.getTracks().forEach(track => track.stop());
-        registerStream = null;
-        registerVideoElement.srcObject = null;
-    }
-}
-
-function captureFaceSample() {
-    if (!registerStream) {
-        showToast('Please start the camera first', 'warning');
-        return;
-    }
-    
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    canvas.width = registerVideoElement.videoWidth;
-    canvas.height = registerVideoElement.videoHeight;
-    context.drawImage(registerVideoElement, 0, 0, canvas.width, canvas.height);
-    
-    const imageData = canvas.toDataURL('image/jpeg');
-    capturedSample = imageData;
-    
-    const previewArea = document.getElementById('sample-preview');
-    previewArea.innerHTML = '';
-    const img = document.createElement('img');
-    img.src = imageData;
-    img.className = 'rounded-lg h-full mx-auto';
-    previewArea.appendChild(img);
-    
-    document.getElementById('submit-registration').disabled = false;
-}
-
-function handleFileUpload(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-    
-    if (!file.type.match('image.*')) {
-        showToast('Please select an image file', 'error');
-        return;
-    }
-    
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        capturedSample = e.target.result;
-        
-        const previewArea = document.getElementById('sample-preview');
-        previewArea.innerHTML = '';
-        const img = document.createElement('img');
-        img.src = capturedSample;
-        img.className = 'rounded-lg h-full mx-auto';
-        previewArea.appendChild(img);
-        
-        document.getElementById('submit-registration').disabled = false;
-    };
-    reader.readAsDataURL(file);
-}
-
-// API Calls
-async function loadClasses() {
-    showLoading('Loading classes...');
-    try {
-        const response = await fetch('/api/classes');
-        if (!response.ok) throw new Error('Failed to load classes');
-        
-        const data = await response.json();
-        
-        // Populate class selects
-        const classSelects = [
-            document.getElementById('attendance-class'),
-            document.getElementById('student-class'),
-            document.getElementById('report-class')
-        ];
-        
-        classSelects.forEach(select => {
-            select.innerHTML = '<option value="">All Classes</option>';
+            // Activate the button that was clicked
+            event.target.classList.add('active');
             
-            data.forEach(cls => {
-                const option = document.createElement('option');
-                option.value = cls.name;
-                option.textContent = cls.name;
-                select.appendChild(option);
-            });
-        });
-        
-        hideLoading();
-    } catch (error) {
-        hideLoading();
-        showToast('Error: ' + error.message, 'error');
-    }
-}
-
-async function loadTodayAttendance() {
-    try {
-        const today = new Date().toISOString().split('T')[0];
-        const classFilter = document.getElementById('attendance-class').value;
-        
-        let url = `/api/attendance?date=${today}`;
-        if (classFilter) {
-            url += `&class=${encodeURIComponent(classFilter)}`;
-        }
-        
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('Failed to load attendance');
-        
-        const data = await response.json();
-        const tableBody = document.getElementById('attendance-table');
-        
-        if (data.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="4" class="py-4 text-center text-gray-500">No attendance records for today</td></tr>';
-            return;
-        }
-        
-        tableBody.innerHTML = '';
-        data.forEach(record => {
-            const row = document.createElement('tr');
-            
-            const nameCell = document.createElement('td');
-            nameCell.className = 'py-2 px-4 border-b border-gray-200';
-            nameCell.textContent = record.student_name;
-            
-            const idCell = document.createElement('td');
-            idCell.className = 'py-2 px-4 border-b border-gray-200';
-            idCell.textContent = record.student_id;
-            
-            const classCell = document.createElement('td');
-            classCell.className = 'py-2 px-4 border-b border-gray-200';
-            classCell.textContent = record.class;
-            
-            const timeCell = document.createElement('td');
-            timeCell.className = 'py-2 px-4 border-b border-gray-200';
-            timeCell.textContent = record.check_in_time;
-            
-            row.appendChild(nameCell);
-            row.appendChild(idCell);
-            row.appendChild(classCell);
-            row.appendChild(timeCell);
-            
-            tableBody.appendChild(row);
-        });
-    } catch (error) {
-        showToast('Error loading attendance: ' + error.message, 'error');
-    }
-}
-
-async function loadStudents() {
-    showLoading('Loading students...');
-    try {
-        const response = await fetch('/api/students');
-        if (!response.ok) throw new Error('Failed to load students');
-        
-        const data = await response.json();
-        const tableBody = document.getElementById('students-table');
-        
-        if (data.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-500">No students registered</td></tr>';
-            hideLoading();
-            return;
-        }
-        
-        tableBody.innerHTML = '';
-        data.forEach(student => {
-            const row = document.createElement('tr');
-            
-            // Create photo cell
-            const photoCell = document.createElement('td');
-            photoCell.className = 'py-2 px-4 border-b border-gray-200';
-            const img = document.createElement('img');
-            if (student.face_samples && student.face_samples.length > 0) {
-                img.src = `/static/${student.face_samples[0]}`;
+            // Start camera if needed
+            if (tabId === 'tab-recognize') {
+                startCamera(videoElement);
+            } else if (tabId === 'tab-register') {
+                startCamera(regVideoElement);
             } else {
-                img.src = 'https://via.placeholder.com/50';
+                stopCamera();
             }
-            img.className = 'w-12 h-12 rounded-full object-cover';
-            photoCell.appendChild(img);
             
-            // Create other cells
-            const nameCell = document.createElement('td');
-            nameCell.className = 'py-2 px-4 border-b border-gray-200';
-            nameCell.textContent = student.name;
-            
-            const idCell = document.createElement('td');
-            idCell.className = 'py-2 px-4 border-b border-gray-200';
-            idCell.textContent = student.student_id;
-            
-            const classCell = document.createElement('td');
-            classCell.className = 'py-2 px-4 border-b border-gray-200';
-            classCell.textContent = student.class;
-            
-            // Create actions cell
-            const actionsCell = document.createElement('td');
-            actionsCell.className = 'py-2 px-4 border-b border-gray-200';
-            
-            const editBtn = document.createElement('button');
-            editBtn.className = 'text-blue-500 hover:text-blue-700 mr-3';
-            editBtn.innerHTML = '<i class="fas fa-edit"></i>';
-            editBtn.onclick = () => editStudent(student.id);
-            
-            const deleteBtn = document.createElement('button');
-            deleteBtn.className = 'text-red-500 hover:text-red-700';
-            deleteBtn.innerHTML = '<i class="fas fa-trash"></i>';
-            deleteBtn.onclick = () => deleteStudent(student.id);
-            
-            actionsCell.appendChild(editBtn);
-            actionsCell.appendChild(deleteBtn);
-            
-            // Append all cells to row
-            row.appendChild(photoCell);
-            row.appendChild(nameCell);
-            row.appendChild(idCell);
-            row.appendChild(classCell);
-            row.appendChild(actionsCell);
-            
-            // Append row to table
-            tableBody.appendChild(row);
-        });
-        
-        hideLoading();
-    } catch (error) {
-        hideLoading();
-        showToast('Error loading students: ' + error.message, 'error');
-    }
-}
-
-// Form Handling
-function setupForms() {
-    // Student registration form
-    document.getElementById('register-form').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
-        if (!capturedSample) {
-            showToast('Please capture or upload a face sample', 'warning');
-            return;
+            // Load data for the tab
+            if (tabId === 'tab-attendance') {
+                loadAttendanceData();
+            } else if (tabId === 'tab-students') {
+                loadStudentsData();
+            }
         }
         
-        const studentData = {
-            name: document.getElementById('student-name').value,
-            student_id: document.getElementById('student-id').value,
-            class: document.getElementById('student-class').value,
-            face_sample: capturedSample
-        };
+        function startCamera(videoEl) {
+            stopCamera(); // Stop any existing stream
+            
+            // Request access to webcam
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(stream => {
+                    videoStream = stream;
+                    videoEl.srcObject = stream;
+                })
+                .catch(err => {
+                    console.error('Error accessing camera:', err);
+                    alert('Could not access camera. Please check permissions.');
+                });
+        }
         
-        showLoading('Registering student...');
+        function stopCamera() {
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+                videoStream = null;
+            }
+        }
         
-        try {
-            const response = await fetch('/api/students', {
+        function captureImage(videoEl, canvasEl) {
+            const context = canvasEl.getContext('2d');
+            context.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
+            return canvasEl.toDataURL('image/jpeg');
+        }
+        
+        function showStatus(elementId, message, isError = false) {
+            const statusElement = document.getElementById(elementId);
+            statusElement.textContent = message;
+            statusElement.classList.remove('hidden', 'success', 'error');
+            statusElement.classList.add(isError ? 'error' : 'success');
+            
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                statusElement.classList.add('hidden');
+            }, 5000);
+        }
+        
+        // API Functions
+        function recognizeFace() {
+            const image = captureImage(videoElement, canvasElement);
+            const classId = document.getElementById('class-select').value;
+            
+            fetch('/api/recognize', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(studentData)
-            });
-            
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to register student');
-            }
-            
-            const result = await response.json();
-            
-            // Reset form
-            document.getElementById('register-form').reset();
-            document.getElementById('sample-preview').innerHTML = '<p class="text-gray-500">No face sample captured</p>';
-            capturedSample = null;
-            document.getElementById('submit-registration').disabled = true;
-            
-            // Reload students list
-            loadStudents();
-            
-            hideLoading();
-            showToast('Student registered successfully', 'success');
-        } catch (error) {
-            hideLoading();
-            showToast(error.message, 'error');
-        }
-    });
-    
-    // Settings form
-    document.getElementById('settings-form').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
-        const settingsData = {
-            model_name: document.getElementById('model-name').value,
-            threshold: document.getElementById('threshold').value,
-            detector_backend: document.getElementById('detector-backend').value
-        };
-        
-        showLoading('Updating settings...');
-        
-        try {
-            const response = await fetch('/api/retrain', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(settingsData)
-            });
-            
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.error || 'Failed to update settings');
-            }
-            
-            document.getElementById('settings-modal').classList.add('hidden');
-            hideLoading();
-            showToast('Settings updated successfully', 'success');
-        } catch (error) {
-            hideLoading();
-            showToast(error.message, 'error');
-        }
-    });
-    
-    // Reset settings
-    document.getElementById('reset-settings').addEventListener('click', function() {
-        document.getElementById('model-name').value = 'VGG-Face';
-        document.getElementById('threshold').value = '0.4';
-        document.getElementById('threshold-value').textContent = '0.4';
-        document.getElementById('detector-backend').value = 'opencv';
-    });
-    
-    // Class filter for attendance
-    document.getElementById('attendance-class').addEventListener('change', loadTodayAttendance);
-}
-
-// Settings management
-function setupSettings() {
-    // Settings modal controls are handled in the DOMContentLoaded event listener
-}
-
-// Face Recognition
-async function takeAttendance() {
-    if (!stream) {
-        showToast('Please start the camera first', 'warning');
-        return;
-    }
-    
-    showLoading('Processing face...');
-    
-    // Capture frame from video
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    canvas.width = videoElement.videoWidth;
-    canvas.height = videoElement.videoHeight;
-    context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-    
-    const imageData = canvas.toDataURL('image/jpeg');
-    
-    try {
-        // Show recognition animation
-        const overlay = document.getElementById('video-overlay');
-        const animation = document.createElement('div');
-        animation.className = 'recognition-animation';
-        overlay.appendChild(animation);
-        animation.style.opacity = '1';
-        
-        // Get selected class
-        const classId = document.getElementById('attendance-class').value;
-        
-        // Send to server for recognition
-        const response = await fetch('/api/recognize', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                image: imageData,
-                class: classId
+                body: JSON.stringify({ image, class: classId })
             })
+            .then(response => response.json())
+            .then(data => {
+                if (data.recognized) {
+                    showStatus('recognition-status', `Successfully recognized ${data.student.name}${data.attendance_recorded ? ' and recorded attendance' : ' (attendance already recorded today)'}`, false);
+                    
+                    // Display student info
+                    const studentInfo = document.getElementById('student-info');
+                    const studentDetails = document.getElementById('student-details');
+                    studentInfo.classList.remove('hidden');
+                    
+                    studentDetails.innerHTML = `
+                        <p><strong>Name:</strong> ${data.student.name}</p>
+                        <p><strong>Student ID:</strong> ${data.student.student_id}</p>
+                        <p><strong>Class:</strong> ${data.student.class}</p>
+                        <p><strong>Confidence:</strong> ${data.confidence.toFixed(2)}%</p>
+                        <p><strong>Date:</strong> ${data.date}</p>
+                        <p><strong>Time:</strong> ${data.time}</p>
+                    `;
+                } else {
+                    showStatus('recognition-status', 'No matching student found', true);
+                    document.getElementById('student-info').classList.add('hidden');
+                }
+            })
+            .catch(error => {
+                console.error('Error recognizing face:', error);
+                showStatus('recognition-status', 'Error recognizing face', true);
+            });
+        }
+        
+        function registerStudent() {
+            const name = document.getElementById('student-name').value;
+            const studentId = document.getElementById('student-id').value;
+            const studentClass = document.getElementById('student-class').value;
+            
+            if (!name || !studentId || !studentClass || !capturedImage) {
+                showStatus('registration-status', 'Please fill all fields and capture a face image', true);
+                return;
+            }
+            
+            fetch('/api/students', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    name: name,
+                    student_id: studentId,
+                    class: studentClass,
+                    face_sample: capturedImage
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showStatus('registration-status', 'Student registered successfully', false);
+                    // Reset form
+                    document.getElementById('student-name').value = '';
+                    document.getElementById('student-id').value = '';
+                    document.getElementById('student-class').value = '';
+                    document.getElementById('captured-face').classList.add('hidden');
+                    capturedImage = null;
+                } else {
+                    showStatus('registration-status', data.error || 'Registration failed', true);
+                }
+            })
+            .catch(error => {
+                console.error('Error registering student:', error);
+                showStatus('registration-status', 'Error registering student', true);
+            });
+        }
+        
+        function loadAttendanceData() {
+            const classFilter = document.getElementById('filter-class').value;
+            const dateFilter = document.getElementById('filter-date').value;
+            
+            let url = '/api/attendance';
+            const params = [];
+            
+            if (classFilter) {
+                params.push(`class=${encodeURIComponent(classFilter)}`);
+            }
+            
+            if (dateFilter) {
+                params.push(`date=${encodeURIComponent(dateFilter)}`);
+            }
+            
+            if (params.length > 0) {
+                url += '?' + params.join('&');
+            }
+            
+            fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                const tableBody = document.getElementById('attendance-data');
+                tableBody.innerHTML = '';
+                
+                if (data.length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="5">No attendance records found</td></tr>';
+                    return;
+                }
+                
+                data.forEach(record => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${record.student_name}</td>
+                        <td>${record.student_id}</td>
+                        <td>${record.class}</td>
+                        <td>${record.date}</td>
+                        <td>${record.check_in_time}</td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+            })
+            .catch(error => {
+                console.error('Error loading attendance data:', error);
+                document.getElementById('attendance-data').innerHTML = 
+                    '<tr><td colspan="5">Error loading attendance data</td></tr>';
+            });
+        }
+        
+        function loadStudentsData() {
+            fetch('/api/students')
+            .then(response => response.json())
+            .then(data => {
+                const tableBody = document.getElementById('students-data');
+                tableBody.innerHTML = '';
+                
+                if (data.length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="5">No students found</td></tr>';
+                    return;
+                }
+                
+                data.forEach(student => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${student.name}</td>
+                        <td>${student.student_id}</td>
+                        <td>${student.class}</td>
+                        <td>${student.added_date}</td>
+                        <td><button onclick="deleteStudent('${student.id}')">Delete</button></td>
+                    `;
+                    tableBody.appendChild(row);
+                });
+            })
+            .catch(error => {
+                console.error('Error loading students data:', error);
+                document.getElementById('students-data').innerHTML = 
+                    '<tr><td colspan="5">Error loading students data</td></tr>';
+            });
+        }
+        
+        function deleteStudent(studentId) {
+            if (!confirm('Are you sure you want to delete this student?')) {
+                return;
+            }
+            
+            fetch(`/api/students/${studentId}`, {
+                method: 'DELETE'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadStudentsData(); // Reload data
+                } else {
+                    alert('Failed to delete student');
+                }
+            })
+            .catch(error => {
+                console.error('Error deleting student:', error);
+                alert('Error deleting student');
+            });
+        }
+        
+        function loadClasses() {
+            fetch('/api/classes')
+            .then(response => response.json())
+            .then(data => {
+                const classSelects = [
+                    document.getElementById('class-select'),
+                    document.getElementById('filter-class')
+                ];
+                
+                classSelects.forEach(select => {
+                    if (!select) return;
+                    
+                    // Keep the first option (All Classes)
+                    const firstOption = select.options[0];
+                    select.innerHTML = '';
+                    select.appendChild(firstOption);
+                    
+                    data.forEach(cls => {
+                        const option = document.createElement('option');
+                        option.value = cls.name;
+                        option.textContent = cls.name;
+                        select.appendChild(option);
+                    });
+                });
+            })
+            .catch(error => {
+                console.error('Error loading classes:', error);
+            });
+        }
+        
+        // Event Listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            // Start camera for recognition
+            startCamera(videoElement);
+            
+            // Load initial data
+            loadClasses();
+            
+            // Set up event listeners
+            document.getElementById('capture-btn').addEventListener('click', recognizeFace);
+            
+            document.getElementById('capture-face-btn').addEventListener('click', () => {
+                capturedImage = captureImage(regVideoElement, regCanvasElement);
+                document.getElementById('captured-face').classList.remove('hidden');
+            });
+            
+            document.getElementById('register-btn').addEventListener('click', registerStudent);
+            
+            document.getElementById('filter-btn').addEventListener('click', loadAttendanceData);
         });
         
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Face recognition failed');
-        }
-        
-        const result = await response.json();
-        
-        // Remove animation
-        setTimeout(() => {
-            animation.remove();
-        }, 1000);
-        
-        // Display result
-        const resultContainer = document.getElementById('recognition-result');
-        
-        if (result.recognized) {
-            resultContainer.innerHTML = `
-                <div class="text-center">
-                    <div class="flex justify-center mb-4">
-                        <img src="/static/${result.student.image}" class="w-24 h-24 rounded-full object-cover border-4 border-green-500">
-                    </div>
-                    <h3 class="text-xl font-bold text-green-600 mb-2">${result.student.name}</h3>
-                    <div class="text-gray-700 mb-4">
-                        <p><strong>Student ID:</strong> ${result.student.student_id}</p>
-                        <p><strong>Class:</strong> ${result.student.class}</p>
-                        <p><strong>Confidence:</strong> ${result.confidence.toFixed(2)}%</p>
-                    </div>
-                    <div class="bg-${result.attendance_recorded ? 'green' : 'blue'}-100 p-3 rounded-lg">
-                        <p class="text-${result.attendance_recorded ? 'green' : 'blue'}-700">
-                            ${result.attendance_recorded ? 'Attendance recorded successfully!' : 'Already marked present today'}
-                        </p>
-                        <p class="text-gray-600 text-sm">${result.date} ${result.time}</p>
-                    </div>
-                </div>
-            `;
-            
-            // Reload today's attendance
-            loadTodayAttendance();
-            
-            // Success sound
-            const audio = new Audio('/static/sound/success.mp3');
-            audio.play().catch(e => console.log('Audio play failed: ', e));
-        } else {
-            resultContainer.innerHTML = `
-                <div class="text-center">
-                    <div class="w-24 h-24 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
-                        <i class="fas fa-user-slash text-red-500 text-3xl"></i>
-                    </div>
-                    <h3 class="text-xl font-bold text-red-600 mb-2">No Match Found</h3>
-                    <p class="text-gray-700">This face doesn't match any registered student.</p>
-                </div>
-            `;
-            
-            // Error sound
-            const audio = new Audio('/static/sound/error.mp3');
-            audio.play().catch(e => console.log('Audio play failed: ', e));
-        }
-        
-        hideLoading();
-    } catch (error) {
-        hideLoading();
-        document.getElementById('video-overlay').innerHTML = '';
-        showToast(error.message, 'error');
-    }
-}
-
-// Student Management
-async function editStudent(studentId) {
-    showToast('Edit functionality not implemented in this demo', 'info');
-}
-
-async function deleteStudent(studentId) {
-    if (!confirm('Are you sure you want to delete this student?')) {
-        return;
-    }
-    
-    showLoading('Deleting student...');
-    
-    try {
-        const response = await fetch(`/api/students/${studentId}`, {
-            method: 'DELETE'
-        });
-        
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Failed to delete student');
-        }
-        
-        // Reload students list
-        loadStudents();
-        
-        hideLoading();
-        showToast('Student deleted successfully', 'success');
-    } catch (error) {
-        hideLoading();
-        showToast(error.message, 'error');
-    }
-}
-
-// Report Functions
-async function generateReport() {
-    const classFilter = document.getElementById('report-class').value;
-    const startDate = document.getElementById('date-start').value;
-    const endDate = document.getElementById('date-end').value;
-    
-    if (!startDate || !endDate) {
-        showToast('Please select a date range', 'warning');
-        return;
-    }
-    
-    showLoading('Generating report...');
-    
-    try {
-        let url = `/api/attendance?start_date=${startDate}&end_date=${endDate}`;
-        if (classFilter) {
-            url += `&class=${encodeURIComponent(classFilter)}`;
-        }
-        
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('Failed to generate report');
-        
-        reportData = await response.json();
-        const tableBody = document.getElementById('report-table');
-        
-        if (reportData.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-500">No attendance records found for the selected period</td></tr>';
-            hideLoading();
-            return;
-        }
-        
-        tableBody.innerHTML = '';
-        reportData.forEach(record => {
-            const row = document.createElement('tr');
-            
-            const nameCell = document.createElement('td');
-            nameCell.className = 'py-2 px-4 border-b border-gray-200';
-            nameCell.textContent = record.student_name;
-            
-            const idCell = document.createElement('td');
-            idCell.className = 'py-2 px-4 border-b border-gray-200';
-            idCell.textContent = record.student_id;
-            
-            const classCell = document.createElement('td');
-            classCell.className = 'py-2 px-4 border-b border-gray-200';
-            classCell.textContent = record.class;
-            
-            const dateCell = document.createElement('td');
-            dateCell.className = 'py-2 px-4 border-b border-gray-200';
-            dateCell.textContent = record.date;
-            
-            const timeCell = document.createElement('td');
-            timeCell.className = 'py-2 px-4 border-b border-gray-200';
-            timeCell.textContent = record.check_in_time;
-            
-            row.appendChild(nameCell);
-            row.appendChild(idCell);
-            row.appendChild(classCell);
-            row.appendChild(dateCell);
-            row.appendChild(timeCell);
-            
-            tableBody.appendChild(row);
-        });
-        
-        hideLoading();
-        showToast('Report generated successfully', 'success');
-    } catch (error) {
-        hideLoading();
-        showToast('Error generating report: ' + error.message, 'error');
-    }
-}
-
-function exportReportToCsv() {
-    if (reportData.length === 0) {
-        showToast('No report data to export', 'warning');
-        return;
-    }
-    
-    // Create CSV content
-    const headers = ['Name', 'Student ID', 'Class', 'Date', 'Check-in Time'];
-    const csvContent = [
-        headers.join(','),
-        ...reportData.map(record => [
-            record.student_name,
-            record.student_id,
-            record.class,
-            record.date,
-            record.check_in_time
-        ].join(','))
-    ].join('\n');
-    
-    // Create download link
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `attendance_report_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    showToast('Report exported successfully', 'success');
-}
-
-function printReport() {
-    if (reportData.length === 0) {
-        showToast('No report data to print', 'warning');
-        return;
-    }
-    
-    // Create printable content
-    const classFilter = document.getElementById('report-class').value || 'All Classes';
-    const startDate = document.getElementById('date-start').value;
-    const endDate = document.getElementById('date-end').value;
-    
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(`
-        <html>
-        <head>
-            <title>Attendance Report</title>
-            <style>
-                body { font-family: Arial, sans-serif; margin: 20px; }
-                h1 { text-align: center; color: #4f46e5; }
-                .report-meta { margin-bottom: 20px; }
-                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                th { background-color: #f2f2f2; }
-                .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #777; }
-            </style>
-        </head>
-        <body>
-            <h1>Attendance Report</h1>
-            <div class="report-meta">
-                <p><strong>Class:</strong> ${classFilter}</p>
-                <p><strong>Period:</strong> ${startDate} to ${endDate}</p>
-                <p><strong>Generated on:</strong> ${new Date().toLocaleString()}</p>
-            </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Student ID</th>
-                        <th>Class</th>
-                        <th>Date</th>
-                        <th>Check-in Time</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${reportData.map(record => `
-                        <tr>
-                            <td>${record.student_name}</td>
-                            <td>${record.student_id}</td>
-                            <td>${record.class}</td>
-                            <td>${record.date}</td>
-                            <td>${record.check_in_time}</td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-            <div class="footer">
-                <p>DeepSeek Facial Attendance System - Generated on ${new Date().toLocaleString()}</p>
-            </div>
-        </body>
-        </html>
-    `);
-    
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => {
-        printWindow.print();
-    }, 500);
-}
-
-// UI Helpers
-function showLoading(message = 'Processing...') {
-    document.getElementById('loading-message').textContent = message;
-    document.getElementById('loading-overlay').classList.remove('hidden');
-}
-
-function hideLoading() {
-    document.getElementById('loading-overlay').classList.add('hidden');
-}
-
-function showToast(message, type = 'info') {
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    toast.innerHTML = `
-        <div class="toast-content">
-            <i class="fas ${getToastIcon(type)} mr-2"></i>
-            <span>${message}</span>
-        </div>
-        <button class="toast-close">&times;</button>
-    `;
-    
-    const toastContainer = document.getElementById('toast-container');
-    if (!toastContainer) {
-        const container = document.createElement('div');
-        container.id = 'toast-container';
-        document.body.appendChild(container);
-    }
-    
-    document.getElementById('toast-container').appendChild(toast);
-    
-    // Auto-dismiss after 5 seconds
-    setTimeout(() => {
-        toast.classList.add('toast-hide');
-        setTimeout(() => {
-            toast.remove();
-        }, 300);
-    }, 5000);
-    
-    // Add close button functionality
-    toast.querySelector('.toast-close').addEventListener('click', () => {
-        toast.classList.add('toast-hide');
-        setTimeout(() => {
-            toast.remove();
-        }, 300);
-    });
-}
-
-function getToastIcon(type) {
-    switch (type) {
-        case 'success':
-            return 'fa-check-circle';
-        case 'error':
-            return 'fa-exclamation-circle';
-        case 'warning':
-            return 'fa-exclamation-triangle';
-        default:
-            return 'fa-info-circle';
-    }
-}
-
-// Function to handle API errors consistently
-function handleApiError(error) {
-    console.error('API Error:', error);
-    if (error.response && error.response.data && error.response.data.error) {
-        showToast(error.response.data.error, 'error');
-    } else {
-        showToast('An unexpected error occurred. Please try again.', 'error');
-    }
-    hideLoading();
-}
-
-// Window resize handling for responsive layout
-window.addEventListener('resize', function() {
-    // Adjust video elements size if needed for responsiveness
-    const videoContainers = document.querySelectorAll('.video-container');
-    videoContainers.forEach(container => {
-        const width = container.offsetWidth;
-        const height = width * 0.75; // Maintain 4:3 aspect ratio
-        container.style.height = `${height}px`;
-    });
-});
-
-// Initialize the application when the window loads
-window.addEventListener('load', function() {
-    // Initialize any responsive elements
-    const videoContainers = document.querySelectorAll('.video-container');
-    videoContainers.forEach(container => {
-        const width = container.offsetWidth;
-        const height = width * 0.75; // Maintain 4:3 aspect ratio
-        container.style.height = `${height}px`;
-    });
-    
-    // Check browser compatibility
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        showToast('Your browser does not support camera access. Please use a modern browser like Chrome or Firefox.', 'error');
-    }
-});
-
-// Add event listeners to filter inputs for real-time filtering
-document.getElementById('search-students').addEventListener('input', function() {
-    const searchTerm = this.value.toLowerCase();
-    const studentRows = document.querySelectorAll('#students-table tr:not(:first-child)');
-    
-    studentRows.forEach(row => {
-        const name = row.children[1].textContent.toLowerCase();
-        const id = row.children[2].textContent.toLowerCase();
-        const className = row.children[3].textContent.toLowerCase();
-        
-        if (name.includes(searchTerm) || id.includes(searchTerm) || className.includes(searchTerm)) {
-            row.style.display = '';
-        } else {
-            row.style.display = 'none';
-        }
-    });
-});
-
-// Add more robust error handling for camera access
-async function handleCameraError(error) {
-    console.error('Camera error:', error);
-    
-    if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-        showToast('No camera found. Please connect a camera and try again.', 'error');
-    } else if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-        showToast('Camera access denied. Please allow camera access and try again.', 'error');
-    } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
-        showToast('Camera is in use by another application. Please close other applications and try again.', 'error');
-    } else {
-        showToast('Error accessing camera: ' + error.message, 'error');
-    }
-};
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', stopCamera);
+    </script>
+</body>
+</html>
