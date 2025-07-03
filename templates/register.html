@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Register</title>
+</head>
+<body>
+    <h2>Register</h2>
+    <form method="POST">
+        <input name="username" placeholder="Username" required><br><br>
+        <input name="password" type="password" placeholder="Password" required><br><br>
+        <button type="submit">Register</button>
+    </form>
+    {% if error %}
+        <p style="color:red">{{ error }}</p>
+    {% endif %}
+    <p>Already have an account? <a href="{{ url_for('login_user') }}">Login</a></p>
+</body>
+</html>
+🖼️ 4. Optional: Add Login Info to index.html
+Open your existing index.html and add this below <body>:
+
+html
+Copy
+Edit
+{% if username %}
+<div style="text-align:right; margin-bottom: 10px;">
+    Logged in as <strong>{{ username }}</strong> |
+    <a href="{{ url_for('logout_user') }}">Logout</a>
+</div>
+{% endif %}
