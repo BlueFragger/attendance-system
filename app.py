@@ -16,6 +16,7 @@ import resource  # For memory limiting
 import time  # Added for database retry logic
 
 app = Flask(__name__)
+app.secret_key = 'your_secure_secret_key_here'
 
 # Memory optimization - limit memory usage
 def limit_memory(max_mem_mb=500):
@@ -48,6 +49,185 @@ def get_db_connection(timeout=20.0, isolation_level=None):
         conn.isolation_level = isolation_level
     conn.row_factory = sqlite3.Row
     return conn
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )''')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS students (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        class TEXT NOT NULL,
+        added_date TEXT NOT NULL
+    )''')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS face_samples (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id TEXT NOT NULL,
+        image_path TEXT NOT NULL,
+        FOREIGN KEY (student_id) REFERENCES students (id)
+    )''')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS attendance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id TEXT NOT NULL,
+        class TEXT NOT NULL,
+        check_in_time TEXT NOT NULL,
+        date TEXT NOT NULL,
+        FOREIGN KEY (student_id) REFERENCES students (id)
+    )''')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS classes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        schedule TEXT,
+        teacher TEXT
+    )''')
+
+    conn.commit()
+    conn.close()
+
+init_db()
+
+@app.route('/')
+def index():
+    if 'user' not in session:
+        return redirect(url_for('login_user'))
+    return render_template('index.html', username=session['user'])
+
+@app.route('/login', methods=['GET', 'POST'])
+def login_user():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        user = cursor.fetchone()
+        conn.close()
+
+        if user and check_password_hash(user['password_hash'], password):
+            session['user'] = user['username']
+            return redirect(url_for('index'))
+        return render_template('login.html', error="Invalid credentials.")
+
+    return render_template('login.html')
+
+@app.route('/register', methods=['GET', 'POST'])
+def register_user():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        password_hash = generate_password_hash(password)
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+                           (username, password_hash, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            conn.close()
+            return render_template('register.html', error="Username already exists.")
+        conn.close()
+        return redirect(url_for('login_user'))
+
+    return render_template('register.html')
+
+@app.route('/logout')
+def logout_user():
+    session.pop('user', None)
+    return redirect(url_for('login_user'))
+
+@app.route('/api/students', methods=['GET'])
+def get_students():
+    if 'user' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM students")
+        students = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return jsonify(students)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/attendance', methods=['GET'])
+def get_attendance():
+    if 'user' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        class_filter = request.args.get('class', '')
+        date_filter = request.args.get('date', '')
+        start_date = request.args.get('start_date', '')
+        end_date = request.args.get('end_date', '')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        query = "SELECT * FROM attendance WHERE 1=1"
+        params = []
+
+        if class_filter:
+            query += " AND class = ?"
+            params.append(class_filter)
+
+        if date_filter:
+            query += " AND date = ?"
+            params.append(date_filter)
+
+        if start_date and end_date:
+            query += " AND date BETWEEN ? AND ?"
+            params.extend([start_date, end_date])
+
+        cursor.execute(query, params)
+        attendance = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return jsonify(attendance)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/students', methods=['POST'])
+def register_student():
+    if 'user' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        data = request.json
+
+        student_id = str(uuid.uuid4())
+        philippines_date = datetime.now(pytz.timezone('Asia/Manila')).strftime("%Y-%m-%d")
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO students (id, name, student_id, class, added_date) VALUES (?, ?, ?, ?, ?)",
+            (student_id, data['name'], data['student_id'], data['class'], philippines_date)
+        )
+        conn.commit()
+        conn.close()
+
+        return jsonify({"success": True, "student_id": student_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(debug=True)
 
 def execute_with_retry(query, params=(), max_retries=5, retry_delay=1.0):
     """Execute a database query with retry logic for locks"""
